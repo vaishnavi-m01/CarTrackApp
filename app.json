@@ -1,0 +1,32 @@
+{
+  "expo": {
+    "name": "CarTrack Pro",
+    "slug": "cartrack-pro",
+    "scheme": "cartrack",
+    "version": "1.0.0",
+    "icon": "./src/assets/icon.png",
+    "primaryColor": "#764ba2",
+    "userInterfaceStyle": "automatic",
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {
+      "package": "com.vaishnavim21052004.cartrackpro",
+      "versionCode": 2,
+      "allowBackup": true,
+      "icon": "./src/assets/icon.png",
+      "adaptiveIcon": {
+        "foregroundImage": "./src/assets/adaptive-icon.png",
+        "backgroundColor": "#764ba2"
+      }
+    },
+    "extra": {
+      "eas": {
+        "projectId": "9df091f6-128c-4c70-b586-3ef3edf61589"
+      }
+    }
+  }
+}
