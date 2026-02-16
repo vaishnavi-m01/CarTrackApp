@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback } from 'react';
 import {
     View,
     Text,
@@ -9,20 +9,51 @@ import {
     Alert,
     Linking,
     ActivityIndicator,
+    ToastAndroid,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
+import { useFocusEffect } from '@react-navigation/native';
 import { useApp } from '../context/AppContext';
 import { COLORS, SIZES, SHADOWS } from '../constants/theme';
+import apiClient from '../api/apiClient';
 
 export default function InsuranceScreen({ navigation, route }: { navigation: any, route: any }) {
-    const { vehicles, addDocument } = useApp();
+    const { vehicles } = useApp();
     const insets = useSafeAreaInsets();
     const vehicleId = route.params?.vehicleId;
     const vehicle = vehicles.find(v => v.id === vehicleId) || vehicles[0];
 
+    const [insurance, setInsurance] = useState<any>(null);
+    const [isLoading, setIsLoading] = useState(true);
     const [isDownloading, setIsDownloading] = useState(false);
+
+    const fetchInsurance = useCallback(async () => {
+        if (!vehicleId) return;
+        setIsLoading(true);
+        try {
+            const response = await apiClient.get(`/insurance?vehicleId=${vehicleId}`);
+            if (response.data && response.data.length > 0) {
+                // Get the latest/active policy
+                // Assuming the backend returns them in order or we pick the first one which is active
+                setInsurance(response.data[0]);
+            } else {
+                setInsurance(null);
+            }
+        } catch (error) {
+            console.error('Error fetching insurance:', error);
+            // Don't show alert here to avoid annoying popups on empty state
+        } finally {
+            setIsLoading(false);
+        }
+    }, [vehicleId]);
+
+    useFocusEffect(
+        useCallback(() => {
+            fetchInsurance();
+        }, [fetchInsurance])
+    );
 
     const formatDate = (dateStr?: string) => {
         if (!dateStr) return 'N/A';
@@ -36,6 +67,10 @@ export default function InsuranceScreen({ navigation, route }: { navigation: any
 
     const handleDownload = () => {
         if (isDownloading) return;
+        if (!insurance) {
+            Alert.alert("No Policy", "There is no active policy to download.");
+            return;
+        }
 
         setIsDownloading(true);
 
@@ -43,30 +78,14 @@ export default function InsuranceScreen({ navigation, route }: { navigation: any
         setTimeout(() => {
             setIsDownloading(false);
 
-            // Logically save to AppContext documents
-            addDocument({
-                title: `Insurance Policy - ${vehicle?.brand} ${vehicle?.model}`,
-                type: 'Insurance',
-                addedDate: new Date().toLocaleDateString('en-IN'),
-                vehicleId: vehicle?.id,
-                files: [
-                    {
-                        uri: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
-                        name: `Policy_${vehicle?.policyNumber || 'POL-8829'}.pdf`,
-                        type: 'pdf'
-                    }
-                ]
-            });
-
             Alert.alert(
                 "Download Complete",
                 "Your insurance policy has been downloaded and saved to your 'Documents' section for easy access.",
                 [
-                    { text: "View Documents", onPress: () => navigation.navigate('VehicleDocuments', { vehicleId: vehicle?.id }) },
                     { text: "Dismiss", style: "cancel" }
                 ]
             );
-        }, 2000);
+        }, 1500);
     };
 
     const handleCallSupport = async () => {
@@ -88,96 +107,147 @@ export default function InsuranceScreen({ navigation, route }: { navigation: any
     return (
         <View style={styles.container}>
             <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-
-                {/* Main Policy Card with Gradient & Pattern */}
-                <LinearGradient
-                    colors={['#10b981', '#059669']}
-                    style={styles.policyCard}
-                    start={{ x: 0, y: 0 }}
-                    end={{ x: 1, y: 1 }}
-                >
-                    {/* Background Pattern Icon */}
-                    <View style={styles.patternIcon}>
-                        <Ionicons name="shield-checkmark" size={120} color="rgba(255,255,255,0.1)" />
+                {isLoading ? (
+                    <View style={styles.loadingContainer}>
+                        <ActivityIndicator size="large" color={COLORS.primary} />
+                        <Text style={styles.loadingText}>Fetching insurance details...</Text>
                     </View>
-
-                    <View style={styles.cardHeader}>
-                        <View style={styles.iconBg}>
-                            <Ionicons name="shield-checkmark" size={24} color={COLORS.white} />
-                        </View>
-                        <View style={styles.statusBadge}>
-                            <View style={styles.statusDot} />
-                            <Text style={styles.statusText}>Active Policy</Text>
-                        </View>
+                ) : !insurance ? (
+                    <View style={styles.emptyContainer}>
+                        <Ionicons name="shield-outline" size={80} color={COLORS.gray} />
+                        <Text style={styles.emptyTitle}>No Active Policy</Text>
+                        <Text style={styles.emptySubtitle}>You haven't added any insurance policy for this vehicle yet.</Text>
+                        <TouchableOpacity
+                            style={styles.addFirstBtn}
+                            onPress={() => navigation.navigate('RenewInsurance', { vehicleId })}
+                        >
+                            <Text style={styles.addFirstBtnText}>Add Policy Now</Text>
+                        </TouchableOpacity>
                     </View>
-
-                    <View style={styles.cardBody}>
-                        <View>
-                            <Text style={styles.label}>Policy Number</Text>
-                            <Text style={styles.value}>{vehicle?.policyNumber || 'POL-8829-331-X'}</Text>
-                        </View>
-
-                        <View style={styles.cardFooter}>
-                            <View>
-                                <Text style={styles.label}>Provider</Text>
-                                <Text style={styles.valueSmall}>{vehicle?.insuranceProvider || 'HDFC ERGO'}</Text>
+                ) : (
+                    <>
+                        {/* Main Policy Card with Gradient & Pattern */}
+                        <LinearGradient
+                            colors={insurance.status === 'EXPIRED' ? ['#f87171', '#dc2626'] : ['#10b981', '#059669']}
+                            style={styles.policyCard}
+                            start={{ x: 0, y: 0 }}
+                            end={{ x: 1, y: 1 }}
+                        >
+                            {/* Background Pattern Icon */}
+                            <View style={styles.patternIcon}>
+                                <Ionicons name="shield-checkmark" size={120} color="rgba(255,255,255,0.1)" />
                             </View>
-                            <View style={{ alignItems: 'flex-end' }}>
-                                <Text style={styles.label}>Expires on</Text>
-                                <Text style={styles.valueSmall}>{formatDate(vehicle?.insuranceExpiry)}</Text>
+
+                            <View style={styles.cardHeader}>
+                                <View style={styles.iconBg}>
+                                    <Ionicons name="shield-checkmark" size={24} color={COLORS.white} />
+                                </View>
+                                <View style={styles.statusBadge}>
+                                    <View style={[styles.statusDot, { backgroundColor: insurance.status === 'ACTIVE' ? '#fff' : '#fbbf24' }]} />
+                                    <Text style={styles.statusText}>{insurance.status} Policy</Text>
+                                </View>
+                            </View>
+
+                            <View style={styles.cardBody}>
+                                <View>
+                                    <Text style={styles.label}>Policy Number</Text>
+                                    <Text style={styles.value}>{insurance.policyNumber}</Text>
+                                </View>
+
+                                <View style={styles.cardFooter}>
+                                    <View>
+                                        <Text style={styles.label}>Provider</Text>
+                                        <Text style={styles.valueSmall}>{insurance.insuranceProvider}</Text>
+                                    </View>
+                                    <View style={{ alignItems: 'flex-end' }}>
+                                        <Text style={styles.label}>Expires on</Text>
+                                        <Text style={styles.valueSmall}>{formatDate(insurance.expiryDate)}</Text>
+                                    </View>
+                                </View>
+                            </View>
+                        </LinearGradient>
+
+                        <Text style={styles.sectionTitle}>Policy Details</Text>
+
+                        <View style={styles.detailsCard}>
+                            <View style={styles.detailRow}>
+                                <Text style={styles.detailLabel}>Start Date</Text>
+                                <Text style={styles.detailValue}>{formatDate(insurance.policyStartDate)}</Text>
+                            </View>
+                            <View style={styles.divider} />
+                            <View style={styles.detailRow}>
+                                <Text style={styles.detailLabel}>Premium Paid</Text>
+                                <Text style={styles.detailValue}>₹{insurance.premiumAmount?.toLocaleString('en-IN')}</Text>
+                            </View>
+                            <View style={styles.divider} />
+                            <View style={styles.detailRow}>
+                                <Text style={styles.detailLabel}>Vehicle</Text>
+                                <Text style={styles.detailValue}>{vehicle?.brand} {vehicle?.model}</Text>
                             </View>
                         </View>
-                    </View>
-                </LinearGradient>
 
-                <Text style={styles.sectionTitle}>Quick Actions</Text>
+                        <Text style={styles.sectionTitle}>Quick Actions</Text>
 
-                <View style={styles.quickActionsGrid}>
-                    <TouchableOpacity
-                        style={styles.actionCard}
-                        activeOpacity={0.7}
-                        onPress={handleDownload}
-                    >
-                        <View style={styles.actionIconBg}>
-                            <Ionicons name="cloud-download" size={24} color={COLORS.primary} />
+                        <View style={styles.quickActionsGrid}>
+                            <TouchableOpacity
+                                style={styles.actionCard}
+                                activeOpacity={0.7}
+                                onPress={handleDownload}
+                            >
+                                <View style={styles.actionIconBg}>
+                                    <Ionicons name="cloud-download" size={24} color={COLORS.primary} />
+                                </View>
+                                <Text style={styles.actionLabel}>Download</Text>
+                            </TouchableOpacity>
+
+                            <TouchableOpacity
+                                style={styles.actionCard}
+                                activeOpacity={0.7}
+                                onPress={() => navigation.navigate('RenewInsurance', { vehicleId, insurance })}
+                            >
+                                <View style={styles.actionIconBg}>
+                                    <Ionicons name="pencil" size={24} color={COLORS.primary} />
+                                </View>
+                                <Text style={styles.actionLabel}>Edit Policy</Text>
+                            </TouchableOpacity>
+
+                            <TouchableOpacity
+                                style={styles.actionCard}
+                                activeOpacity={0.7}
+                                onPress={handleCallSupport}
+                            >
+                                <View style={styles.actionIconBg}>
+                                    <Ionicons name="call" size={24} color={COLORS.primary} />
+                                </View>
+                                <Text style={styles.actionLabel}>Support</Text>
+                            </TouchableOpacity>
                         </View>
-                        <Text style={styles.actionLabel}>Download Policy</Text>
-                    </TouchableOpacity>
-
-                    <TouchableOpacity
-                        style={styles.actionCard}
-                        activeOpacity={0.7}
-                        onPress={handleCallSupport}
-                    >
-                        <View style={styles.actionIconBg}>
-                            <Ionicons name="call" size={24} color={COLORS.primary} />
-                        </View>
-                        <Text style={styles.actionLabel}>Call Support</Text>
-                    </TouchableOpacity>
-                </View>
-
+                    </>
+                )}
             </ScrollView>
 
             {/* Sticky Footer Button */}
-            <View style={[
-                styles.footer,
-                { paddingBottom: Math.max(insets.bottom, 20) }
-            ]}>
-                <TouchableOpacity
-                    style={styles.renewBtn}
-                    onPress={() => navigation.navigate('RenewInsurance', { vehicleId: vehicle?.id })}
-                    activeOpacity={0.8}
-                >
-                    <LinearGradient
-                        colors={['#10b981', '#059669']}
-                        style={styles.renewGradient}
-                        start={{ x: 0, y: 0 }}
-                        end={{ x: 1, y: 1 }}
+            {!isLoading && insurance && (
+                <View style={[
+                    styles.footer,
+                    { paddingBottom: Math.max(insets.bottom, 20) }
+                ]}>
+                    <TouchableOpacity
+                        style={styles.renewBtn}
+                        onPress={() => navigation.navigate('RenewInsurance', { vehicleId })}
+                        activeOpacity={0.8}
                     >
-                        <Text style={styles.renewBtnText}>Renew Policy</Text>
-                    </LinearGradient>
-                </TouchableOpacity>
-            </View>
+                        <LinearGradient
+                            colors={['#10b981', '#059669']}
+                            style={styles.renewGradient}
+                            start={{ x: 0, y: 0 }}
+                            end={{ x: 1, y: 1 }}
+                        >
+                            <Text style={styles.renewBtnText}>Renew Policy</Text>
+                        </LinearGradient>
+                    </TouchableOpacity>
+                </View>
+            )}
         </View>
     );
 }
@@ -270,6 +340,77 @@ const styles = StyleSheet.create({
         fontSize: 16,
         fontWeight: 'bold',
     },
+    loadingContainer: {
+        height: 300,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    loadingText: {
+        marginTop: 10,
+        color: COLORS.textLight,
+        fontSize: 14,
+    },
+    emptyContainer: {
+        padding: 40,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: COLORS.white,
+        borderRadius: 24,
+        marginTop: 20,
+        ...SHADOWS.light,
+    },
+    emptyTitle: {
+        fontSize: 20,
+        fontWeight: 'bold',
+        color: COLORS.text,
+        marginTop: 20,
+    },
+    emptySubtitle: {
+        fontSize: 14,
+        color: COLORS.textLight,
+        textAlign: 'center',
+        marginTop: 8,
+        lineHeight: 20,
+    },
+    addFirstBtn: {
+        backgroundColor: COLORS.primary,
+        paddingHorizontal: 24,
+        paddingVertical: 12,
+        borderRadius: 12,
+        marginTop: 24,
+    },
+    addFirstBtnText: {
+        color: COLORS.white,
+        fontSize: 16,
+        fontWeight: 'bold',
+    },
+    detailsCard: {
+        backgroundColor: COLORS.white,
+        borderRadius: 20,
+        padding: 20,
+        marginBottom: 30,
+        ...SHADOWS.light,
+    },
+    detailRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        paddingVertical: 12,
+    },
+    detailLabel: {
+        fontSize: 14,
+        color: COLORS.textLight,
+        fontWeight: '500',
+    },
+    detailValue: {
+        fontSize: 15,
+        color: COLORS.text,
+        fontWeight: '600',
+    },
+    divider: {
+        height: 1,
+        backgroundColor: '#f1f5f9',
+    },
     sectionTitle: {
         fontSize: 18,
         fontWeight: 'bold',
@@ -280,27 +421,27 @@ const styles = StyleSheet.create({
     quickActionsGrid: {
         flexDirection: 'row',
         justifyContent: 'space-between',
-        gap: 16,
+        gap: 12,
     },
     actionCard: {
         flex: 1,
         backgroundColor: COLORS.white,
-        padding: 24,
+        padding: 16,
         borderRadius: 20,
         alignItems: 'center',
         gap: 12,
         ...SHADOWS.medium,
     },
     actionIconBg: {
-        width: 56,
-        height: 56,
-        borderRadius: 28,
+        width: 50,
+        height: 50,
+        borderRadius: 25,
         backgroundColor: '#f8fafc',
         justifyContent: 'center',
         alignItems: 'center',
     },
     actionLabel: {
-        fontSize: 14,
+        fontSize: 13,
         fontWeight: '700',
         color: COLORS.text,
         textAlign: 'center',

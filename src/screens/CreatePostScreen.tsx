@@ -14,6 +14,7 @@ import {
     Dimensions,
     FlatList,
     Switch,
+    KeyboardAvoidingView,
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { Ionicons } from '@expo/vector-icons';
@@ -309,348 +310,354 @@ export default function CreatePostScreen({ navigation }: CreatePostScreenProps) 
 
 
     return (
-        <View style={styles.container}>
-            <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
-                {/* Media Section */}
-                {renderMediaUploader()}
+        <KeyboardAvoidingView
+            style={{ flex: 1 }}
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+            keyboardVerticalOffset={Platform.OS === 'ios' ? 80 : 0}
+        >
+            <View style={styles.container}>
+                <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
+                    {/* Media Section */}
+                    {renderMediaUploader()}
 
-                {/* Input Area */}
-                <View style={styles.inputSection}>
-                    <View style={styles.inputWrapper}>
-                        <TextInput
-                            style={styles.mainInput}
-                            placeholder="What's happening in the garage?"
-                            placeholderTextColor="#94A3B8"
-                            value={content}
-                            onChangeText={setContent}
-                            multiline
-                        />
-
-                        {/* Selected Meta Chips */}
-                        {(location || feeling || tags.length > 0) && (
-                            <View style={styles.metaChipsContainer}>
-                                {location ? (
-                                    <View style={styles.metaChip}>
-                                        <Ionicons name="location" size={12} color={COLORS.primary} />
-                                        <Text style={styles.metaChipText}>{location}</Text>
-                                        <TouchableOpacity onPress={handleRemoveLocation}>
-                                            <Ionicons name="close-circle" size={14} color="#94A3B8" />
-                                        </TouchableOpacity>
-                                    </View>
-                                ) : null}
-                                {feeling ? (
-                                    <View style={styles.metaChip}>
-                                        <Text style={styles.metaChipEmoji}>{feelings.find(f => f.label === feeling)?.emoji}</Text>
-                                        <Text style={styles.metaChipText}>feeling {feeling}</Text>
-                                        <TouchableOpacity onPress={handleRemoveFeeling}>
-                                            <Ionicons name="close-circle" size={14} color="#94A3B8" />
-                                        </TouchableOpacity>
-                                    </View>
-                                ) : null}
-                                {tags.map((tag) => (
-                                    <View key={tag} style={styles.metaChip}>
-                                        <Text style={styles.metaChipText}>#{tag}</Text>
-                                        <TouchableOpacity onPress={() => handleRemoveTag(tag)}>
-                                            <Ionicons name="close-circle" size={14} color="#94A3B8" />
-                                        </TouchableOpacity>
-                                    </View>
-                                ))}
-                            </View>
-                        )}
-
-                        <View style={styles.inputActions}>
-                            <TouchableOpacity onPress={() => setShowTagModal(true)}>
-                                <Ionicons name="car-outline" size={22} color="#94A3B8" />
-                            </TouchableOpacity>
-                            <TouchableOpacity onPress={() => setShowFeelingModal(true)}>
-                                <Ionicons name="happy-outline" size={22} color="#94A3B8" />
-                            </TouchableOpacity>
-                            <TouchableOpacity onPress={() => setShowLocationModal(true)}>
-                                <Ionicons name="location-outline" size={22} color="#94A3B8" />
-                            </TouchableOpacity>
-                            <TouchableOpacity>
-                                <Ionicons name="people-outline" size={22} color="#94A3B8" />
-                            </TouchableOpacity>
-                        </View>
-                        <Text style={styles.charCount}>{content.length}/2200</Text>
-                    </View>
-                </View>
-
-                {/* Tag Vehicle Section */}
-                <View style={styles.sectionContainer}>
-                    <Text style={styles.sectionTitle}>Tag Vehicle from Garage</Text>
-                    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.garageScroll}>
-                        {vehicles.map((v: any) => (
-                            <TouchableOpacity
-                                key={v.id}
-                                style={[
-                                    styles.vehicleChip,
-                                    selectedGarageVehicle === v.id && styles.vehicleChipActive
-                                ]}
-                                onPress={() => setSelectedGarageVehicle(selectedGarageVehicle === v.id ? null : v.id)}
-                            >
-                                <Ionicons
-                                    name={v.type === 'CAR' ? 'car' : 'bicycle'}
-                                    size={16}
-                                    color={selectedGarageVehicle === v.id ? COLORS.white : COLORS.primary}
-                                />
-                                <Text style={[
-                                    styles.vehicleChipText,
-                                    selectedGarageVehicle === v.id && styles.vehicleChipTextActive
-                                ]}>
-                                    {v.year} {v.brand} {v.model}
-                                </Text>
-                            </TouchableOpacity>
-                        ))}
-                    </ScrollView>
-                </View>
-
-                {/* Post Settings */}
-                <View style={styles.sectionContainer}>
-                    <Text style={styles.sectionTitle}>Post Settings</Text>
-                    <View style={styles.settingsBox}>
-                        <TouchableOpacity
-                            style={styles.settingRow}
-                            onPress={() => setIsPublic(true)}
-                        >
-                            <View style={styles.settingIconBox}>
-                                <Ionicons name="globe-outline" size={20} color={isPublic ? COLORS.primary : COLORS.text} />
-                            </View>
-                            <View style={styles.settingInfo}>
-                                <Text style={[styles.settingLabel, isPublic && { color: COLORS.primary }]}>Public</Text>
-                                <Text style={styles.settingSub}>Visible to everyone on the platform</Text>
-                            </View>
-                            <Ionicons
-                                name={isPublic ? "radio-button-on" : "radio-button-off"}
-                                size={22}
-                                color={isPublic ? COLORS.primary : "#CBD5E1"}
+                    {/* Input Area */}
+                    <View style={styles.inputSection}>
+                        <View style={styles.inputWrapper}>
+                            <TextInput
+                                style={styles.mainInput}
+                                placeholder="What's happening in the garage?"
+                                placeholderTextColor="#94A3B8"
+                                value={content}
+                                onChangeText={setContent}
+                                multiline
                             />
-                        </TouchableOpacity>
 
-                        <TouchableOpacity
-                            style={styles.settingRow}
-                            onPress={() => setIsPublic(false)}
-                        >
-                            <View style={styles.settingIconBox}>
-                                <Ionicons name="people-outline" size={20} color={!isPublic ? COLORS.primary : COLORS.text} />
-                            </View>
-                            <View style={styles.settingInfo}>
-                                <Text style={[styles.settingLabel, !isPublic && { color: COLORS.primary }]}>Followers Only</Text>
-                                <Text style={styles.settingSub}>Only your followers can see</Text>
-                            </View>
-                            <Ionicons
-                                name={!isPublic ? "radio-button-on" : "radio-button-off"}
-                                size={22}
-                                color={!isPublic ? COLORS.primary : "#CBD5E1"}
-                            />
-                        </TouchableOpacity>
+                            {/* Selected Meta Chips */}
+                            {(location || feeling || tags.length > 0) && (
+                                <View style={styles.metaChipsContainer}>
+                                    {location ? (
+                                        <View style={styles.metaChip}>
+                                            <Ionicons name="location" size={12} color={COLORS.primary} />
+                                            <Text style={styles.metaChipText}>{location}</Text>
+                                            <TouchableOpacity onPress={handleRemoveLocation}>
+                                                <Ionicons name="close-circle" size={14} color="#94A3B8" />
+                                            </TouchableOpacity>
+                                        </View>
+                                    ) : null}
+                                    {feeling ? (
+                                        <View style={styles.metaChip}>
+                                            <Text style={styles.metaChipEmoji}>{feelings.find(f => f.label === feeling)?.emoji}</Text>
+                                            <Text style={styles.metaChipText}>feeling {feeling}</Text>
+                                            <TouchableOpacity onPress={handleRemoveFeeling}>
+                                                <Ionicons name="close-circle" size={14} color="#94A3B8" />
+                                            </TouchableOpacity>
+                                        </View>
+                                    ) : null}
+                                    {tags.map((tag) => (
+                                        <View key={tag} style={styles.metaChip}>
+                                            <Text style={styles.metaChipText}>#{tag}</Text>
+                                            <TouchableOpacity onPress={() => handleRemoveTag(tag)}>
+                                                <Ionicons name="close-circle" size={14} color="#94A3B8" />
+                                            </TouchableOpacity>
+                                        </View>
+                                    ))}
+                                </View>
+                            )}
 
-                        <View style={styles.settingRow}>
-                            <View style={styles.settingIconBox}>
-                                <Ionicons name="chatbubble-outline" size={20} color={COLORS.text} />
+                            <View style={styles.inputActions}>
+                                <TouchableOpacity onPress={() => setShowTagModal(true)}>
+                                    <Ionicons name="car-outline" size={22} color="#94A3B8" />
+                                </TouchableOpacity>
+                                <TouchableOpacity onPress={() => setShowFeelingModal(true)}>
+                                    <Ionicons name="happy-outline" size={22} color="#94A3B8" />
+                                </TouchableOpacity>
+                                <TouchableOpacity onPress={() => setShowLocationModal(true)}>
+                                    <Ionicons name="location-outline" size={22} color="#94A3B8" />
+                                </TouchableOpacity>
+                                <TouchableOpacity>
+                                    <Ionicons name="people-outline" size={22} color="#94A3B8" />
+                                </TouchableOpacity>
                             </View>
-                            <View style={styles.settingInfo}>
-                                <Text style={styles.settingLabel}>Allow Comments</Text>
-                            </View>
-                            <Switch
-                                value={allowComments}
-                                onValueChange={setAllowComments}
-                                trackColor={{ false: '#CBD5E1', true: COLORS.primary }}
-                                thumbColor={COLORS.white}
-                            />
+                            <Text style={styles.charCount}>{content.length}/2200</Text>
                         </View>
                     </View>
-                </View>
 
-                <TouchableOpacity
-                    style={[styles.postNowBtn, (!content.trim() && mediaItems.length === 0) && styles.postNowBtnDisabled]}
-                    onPress={handlePost}
-                    disabled={isPosting || (!content.trim() && mediaItems.length === 0)}
-                >
-                    <Text style={styles.postNowBtnText}>{isPosting ? 'POSTING...' : 'POST NOW'}</Text>
-                </TouchableOpacity>
-
-                <View style={{ height: 40 }} />
-            </ScrollView>
-
-            {/* Existing Modals for Location, Feeling, Tag */}
-            {/* Location Modal */}
-            <Modal
-                visible={showLocationModal}
-                transparent
-                animationType="slide"
-                onRequestClose={() => setShowLocationModal(false)}
-            >
-                <View style={styles.modalOverlay}>
-                    <View style={styles.modalContainer}>
-                        <View style={styles.modalHeader}>
-                            <Text style={styles.modalTitle}>Add Location</Text>
-                            <TouchableOpacity onPress={() => setShowLocationModal(false)}>
-                                <Ionicons name="close" size={24} color={COLORS.text} />
-                            </TouchableOpacity>
-                        </View>
-                        <TextInput
-                            style={styles.modalInput}
-                            placeholder="Search for a place..."
-                            placeholderTextColor={COLORS.textLight}
-                            value={locationInput}
-                            onChangeText={setLocationInput}
-                            autoFocus
-                        />
-                        {locationSuggestions.length > 0 && (
-                            <ScrollView style={{ maxHeight: 180, marginBottom: 10 }}>
-                                {locationSuggestions.map((loc) => (
-                                    <TouchableOpacity key={loc} style={{ padding: 12, borderBottomWidth: 1, borderBottomColor: '#F1F5F9' }} onPress={() => handleAddLocation(loc)}>
-                                        <Text style={{ color: COLORS.text }}>{loc}</Text>
-                                    </TouchableOpacity>
-                                ))}
-                            </ScrollView>
-                        )}
-                        <TouchableOpacity
-                            style={[styles.modalButton, !locationInput.trim() && styles.modalButtonDisabled]}
-                            onPress={() => handleAddLocation()}
-                            disabled={!locationInput.trim()}
-                        >
-                            <Text style={styles.modalButtonText}>Add Location</Text>
-                        </TouchableOpacity>
-                    </View>
-                </View>
-            </Modal>
-
-            {/* Tag Modal (General Tags) */}
-            <Modal
-                visible={showTagModal}
-                transparent
-                animationType="slide"
-                onRequestClose={() => setShowTagModal(false)}
-            >
-                <View style={styles.modalOverlay}>
-                    <View style={styles.modalContainer}>
-                        <View style={styles.modalHeader}>
-                            <Text style={styles.modalTitle}>Add Tag</Text>
-                            <TouchableOpacity onPress={() => setShowTagModal(false)}>
-                                <Ionicons name="close" size={24} color={COLORS.text} />
-                            </TouchableOpacity>
-                        </View>
-                        <TextInput
-                            style={styles.modalInput}
-                            placeholder="Enter tags (e.g., car, travel)"
-                            placeholderTextColor={COLORS.textLight}
-                            value={tagInput}
-                            onChangeText={(text) => {
-                                if (text.endsWith(',')) {
-                                    handleAddTag(text.slice(0, -1), true);
-                                } else {
-                                    setTagInput(text);
-                                }
-                            }}
-                            autoFocus
-                        />
-                        <TouchableOpacity
-                            style={[styles.modalButton, !tagInput.trim() && styles.modalButtonDisabled]}
-                            onPress={() => handleAddTag()}
-                            disabled={!tagInput.trim()}
-                        >
-                            <Text style={styles.modalButtonText}>Add Tag</Text>
-                        </TouchableOpacity>
-                    </View>
-                </View>
-            </Modal>
-
-            {/* Feeling Modal */}
-            <Modal
-                visible={showFeelingModal}
-                transparent
-                animationType="slide"
-                onRequestClose={() => setShowFeelingModal(false)}
-            >
-                <View style={styles.modalOverlay}>
-                    <View style={styles.modalContainer}>
-                        <View style={styles.modalHeader}>
-                            <Text style={styles.modalTitle}>How are you feeling?</Text>
-                            <TouchableOpacity onPress={() => setShowFeelingModal(false)}>
-                                <Ionicons name="close" size={24} color={COLORS.text} />
-                            </TouchableOpacity>
-                        </View>
-                        <ScrollView style={styles.feelingsGrid}>
-                            {feelings.map((item) => (
+                    {/* Tag Vehicle Section */}
+                    <View style={styles.sectionContainer}>
+                        <Text style={styles.sectionTitle}>Tag Vehicle from Garage</Text>
+                        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.garageScroll}>
+                            {vehicles.map((v: any) => (
                                 <TouchableOpacity
-                                    key={item.label}
-                                    style={styles.feelingItem}
-                                    onPress={() => handleSelectFeeling(`${item.emoji} ${item.label}`)}
+                                    key={v.id}
+                                    style={[
+                                        styles.vehicleChip,
+                                        selectedGarageVehicle === v.id && styles.vehicleChipActive
+                                    ]}
+                                    onPress={() => setSelectedGarageVehicle(selectedGarageVehicle === v.id ? null : v.id)}
                                 >
-                                    <Text style={styles.feelingEmoji}>{item.emoji}</Text>
-                                    <Text style={styles.feelingLabel}>{item.label}</Text>
+                                    <Ionicons
+                                        name={v.type === 'CAR' ? 'car' : 'bicycle'}
+                                        size={16}
+                                        color={selectedGarageVehicle === v.id ? COLORS.white : COLORS.primary}
+                                    />
+                                    <Text style={[
+                                        styles.vehicleChipText,
+                                        selectedGarageVehicle === v.id && styles.vehicleChipTextActive
+                                    ]}>
+                                        {v.year} {v.brand} {v.model}
+                                    </Text>
                                 </TouchableOpacity>
                             ))}
                         </ScrollView>
                     </View>
-                </View>
-            </Modal>
 
-            {/* Instagram-style Refinement Modal */}
-            <Modal
-                visible={!!refiningImage}
-                transparent
-                animationType="fade"
-                onRequestClose={() => setRefiningImage(null)}
-            >
-                <View style={styles.refinementOverlay}>
-                    <View style={styles.refinementContainer}>
-                        <View style={styles.refinementHeader}>
-                            <TouchableOpacity onPress={() => {
-                                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                                setRefiningImage(null);
-                            }}>
-                                <Text style={styles.refinementCancel}>Cancel</Text>
-                            </TouchableOpacity>
-                            <Text style={styles.refinementTitle}>Edit Photo</Text>
-                            <TouchableOpacity onPress={() => {
-                                Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-                                handleAddRefinedImage();
-                            }}>
-                                <Text style={styles.refinementAdd}>Add</Text>
-                            </TouchableOpacity>
-                        </View>
-
-                        <View style={styles.previewWrapper}>
+                    {/* Post Settings */}
+                    <View style={styles.sectionContainer}>
+                        <Text style={styles.sectionTitle}>Post Settings</Text>
+                        <View style={styles.settingsBox}>
                             <TouchableOpacity
-                                activeOpacity={0.9}
-                                onPress={toggleRatio}
-                                style={[
-                                    styles.ratioPreview,
-                                    {
-                                        aspectRatio: selectedRatio,
-                                        width: SCREEN_WIDTH,
-                                    }
-                                ]}
+                                style={styles.settingRow}
+                                onPress={() => setIsPublic(true)}
                             >
-                                <Image
-                                    source={{ uri: refiningImage || undefined }}
-                                    style={styles.fullImage}
-                                    resizeMode="cover"
+                                <View style={styles.settingIconBox}>
+                                    <Ionicons name="globe-outline" size={20} color={isPublic ? COLORS.primary : COLORS.text} />
+                                </View>
+                                <View style={styles.settingInfo}>
+                                    <Text style={[styles.settingLabel, isPublic && { color: COLORS.primary }]}>Public</Text>
+                                    <Text style={styles.settingSub}>Visible to everyone on the platform</Text>
+                                </View>
+                                <Ionicons
+                                    name={isPublic ? "radio-button-on" : "radio-button-off"}
+                                    size={22}
+                                    color={isPublic ? COLORS.primary : "#CBD5E1"}
                                 />
+                            </TouchableOpacity>
 
-                                <View style={styles.gridContainer} pointerEvents="none">
-                                    <View style={styles.gridLineV} />
-                                    <View style={styles.gridLineV} />
-                                    <View style={styles.gridLineH} />
-                                    <View style={styles.gridLineH} />
+                            <TouchableOpacity
+                                style={styles.settingRow}
+                                onPress={() => setIsPublic(false)}
+                            >
+                                <View style={styles.settingIconBox}>
+                                    <Ionicons name="people-outline" size={20} color={!isPublic ? COLORS.primary : COLORS.text} />
                                 </View>
+                                <View style={styles.settingInfo}>
+                                    <Text style={[styles.settingLabel, !isPublic && { color: COLORS.primary }]}>Followers Only</Text>
+                                    <Text style={styles.settingSub}>Only your followers can see</Text>
+                                </View>
+                                <Ionicons
+                                    name={!isPublic ? "radio-button-on" : "radio-button-off"}
+                                    size={22}
+                                    color={!isPublic ? COLORS.primary : "#CBD5E1"}
+                                />
+                            </TouchableOpacity>
 
-                                <View style={styles.fitToggleBtn} pointerEvents="none">
-                                    <Ionicons
-                                        name={selectedRatio === 1 ? "resize-outline" : "contract-outline"}
-                                        size={22}
-                                        color={COLORS.white}
-                                    />
+                            <View style={styles.settingRow}>
+                                <View style={styles.settingIconBox}>
+                                    <Ionicons name="chatbubble-outline" size={20} color={COLORS.text} />
                                 </View>
+                                <View style={styles.settingInfo}>
+                                    <Text style={styles.settingLabel}>Allow Comments</Text>
+                                </View>
+                                <Switch
+                                    value={allowComments}
+                                    onValueChange={setAllowComments}
+                                    trackColor={{ false: '#CBD5E1', true: COLORS.primary }}
+                                    thumbColor={COLORS.white}
+                                />
+                            </View>
+                        </View>
+                    </View>
+
+                    <TouchableOpacity
+                        style={[styles.postNowBtn, (!content.trim() && mediaItems.length === 0) && styles.postNowBtnDisabled]}
+                        onPress={handlePost}
+                        disabled={isPosting || (!content.trim() && mediaItems.length === 0)}
+                    >
+                        <Text style={styles.postNowBtnText}>{isPosting ? 'POSTING...' : 'POST NOW'}</Text>
+                    </TouchableOpacity>
+
+                    <View style={{ height: 40 }} />
+                </ScrollView>
+
+                {/* Existing Modals for Location, Feeling, Tag */}
+                {/* Location Modal */}
+                <Modal
+                    visible={showLocationModal}
+                    transparent
+                    animationType="slide"
+                    onRequestClose={() => setShowLocationModal(false)}
+                >
+                    <View style={styles.modalOverlay}>
+                        <View style={styles.modalContainer}>
+                            <View style={styles.modalHeader}>
+                                <Text style={styles.modalTitle}>Add Location</Text>
+                                <TouchableOpacity onPress={() => setShowLocationModal(false)}>
+                                    <Ionicons name="close" size={24} color={COLORS.text} />
+                                </TouchableOpacity>
+                            </View>
+                            <TextInput
+                                style={styles.modalInput}
+                                placeholder="Search for a place..."
+                                placeholderTextColor={COLORS.textLight}
+                                value={locationInput}
+                                onChangeText={setLocationInput}
+                                autoFocus
+                            />
+                            {locationSuggestions.length > 0 && (
+                                <ScrollView style={{ maxHeight: 180, marginBottom: 10 }}>
+                                    {locationSuggestions.map((loc) => (
+                                        <TouchableOpacity key={loc} style={{ padding: 12, borderBottomWidth: 1, borderBottomColor: '#F1F5F9' }} onPress={() => handleAddLocation(loc)}>
+                                            <Text style={{ color: COLORS.text }}>{loc}</Text>
+                                        </TouchableOpacity>
+                                    ))}
+                                </ScrollView>
+                            )}
+                            <TouchableOpacity
+                                style={[styles.modalButton, !locationInput.trim() && styles.modalButtonDisabled]}
+                                onPress={() => handleAddLocation()}
+                                disabled={!locationInput.trim()}
+                            >
+                                <Text style={styles.modalButtonText}>Add Location</Text>
                             </TouchableOpacity>
                         </View>
                     </View>
-                </View>
-            </Modal>
-        </View>
+                </Modal>
+
+                {/* Tag Modal (General Tags) */}
+                <Modal
+                    visible={showTagModal}
+                    transparent
+                    animationType="slide"
+                    onRequestClose={() => setShowTagModal(false)}
+                >
+                    <View style={styles.modalOverlay}>
+                        <View style={styles.modalContainer}>
+                            <View style={styles.modalHeader}>
+                                <Text style={styles.modalTitle}>Add Tag</Text>
+                                <TouchableOpacity onPress={() => setShowTagModal(false)}>
+                                    <Ionicons name="close" size={24} color={COLORS.text} />
+                                </TouchableOpacity>
+                            </View>
+                            <TextInput
+                                style={styles.modalInput}
+                                placeholder="Enter tags (e.g., car, travel)"
+                                placeholderTextColor={COLORS.textLight}
+                                value={tagInput}
+                                onChangeText={(text) => {
+                                    if (text.endsWith(',')) {
+                                        handleAddTag(text.slice(0, -1), true);
+                                    } else {
+                                        setTagInput(text);
+                                    }
+                                }}
+                                autoFocus
+                            />
+                            <TouchableOpacity
+                                style={[styles.modalButton, !tagInput.trim() && styles.modalButtonDisabled]}
+                                onPress={() => handleAddTag()}
+                                disabled={!tagInput.trim()}
+                            >
+                                <Text style={styles.modalButtonText}>Add Tag</Text>
+                            </TouchableOpacity>
+                        </View>
+                    </View>
+                </Modal>
+
+                {/* Feeling Modal */}
+                <Modal
+                    visible={showFeelingModal}
+                    transparent
+                    animationType="slide"
+                    onRequestClose={() => setShowFeelingModal(false)}
+                >
+                    <View style={styles.modalOverlay}>
+                        <View style={styles.modalContainer}>
+                            <View style={styles.modalHeader}>
+                                <Text style={styles.modalTitle}>How are you feeling?</Text>
+                                <TouchableOpacity onPress={() => setShowFeelingModal(false)}>
+                                    <Ionicons name="close" size={24} color={COLORS.text} />
+                                </TouchableOpacity>
+                            </View>
+                            <ScrollView style={styles.feelingsGrid}>
+                                {feelings.map((item) => (
+                                    <TouchableOpacity
+                                        key={item.label}
+                                        style={styles.feelingItem}
+                                        onPress={() => handleSelectFeeling(`${item.emoji} ${item.label}`)}
+                                    >
+                                        <Text style={styles.feelingEmoji}>{item.emoji}</Text>
+                                        <Text style={styles.feelingLabel}>{item.label}</Text>
+                                    </TouchableOpacity>
+                                ))}
+                            </ScrollView>
+                        </View>
+                    </View>
+                </Modal>
+
+                {/* Instagram-style Refinement Modal */}
+                <Modal
+                    visible={!!refiningImage}
+                    transparent
+                    animationType="fade"
+                    onRequestClose={() => setRefiningImage(null)}
+                >
+                    <View style={styles.refinementOverlay}>
+                        <View style={styles.refinementContainer}>
+                            <View style={styles.refinementHeader}>
+                                <TouchableOpacity onPress={() => {
+                                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                                    setRefiningImage(null);
+                                }}>
+                                    <Text style={styles.refinementCancel}>Cancel</Text>
+                                </TouchableOpacity>
+                                <Text style={styles.refinementTitle}>Edit Photo</Text>
+                                <TouchableOpacity onPress={() => {
+                                    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+                                    handleAddRefinedImage();
+                                }}>
+                                    <Text style={styles.refinementAdd}>Add</Text>
+                                </TouchableOpacity>
+                            </View>
+
+                            <View style={styles.previewWrapper}>
+                                <TouchableOpacity
+                                    activeOpacity={0.9}
+                                    onPress={toggleRatio}
+                                    style={[
+                                        styles.ratioPreview,
+                                        {
+                                            aspectRatio: selectedRatio,
+                                            width: SCREEN_WIDTH,
+                                        }
+                                    ]}
+                                >
+                                    <Image
+                                        source={{ uri: refiningImage || undefined }}
+                                        style={styles.fullImage}
+                                        resizeMode="cover"
+                                    />
+
+                                    <View style={styles.gridContainer} pointerEvents="none">
+                                        <View style={styles.gridLineV} />
+                                        <View style={styles.gridLineV} />
+                                        <View style={styles.gridLineH} />
+                                        <View style={styles.gridLineH} />
+                                    </View>
+
+                                    <View style={styles.fitToggleBtn} pointerEvents="none">
+                                        <Ionicons
+                                            name={selectedRatio === 1 ? "resize-outline" : "contract-outline"}
+                                            size={22}
+                                            color={COLORS.white}
+                                        />
+                                    </View>
+                                </TouchableOpacity>
+                            </View>
+                        </View>
+                    </View>
+                </Modal>
+            </View>
+        </KeyboardAvoidingView>
     );
 }
 

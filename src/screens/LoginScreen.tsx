@@ -9,7 +9,8 @@ import {
     Platform,
     ScrollView,
     Alert,
-} from 'react-native';
+    ToastAndroid,
+} from 'react-native';  
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { COLORS } from '../constants/theme';
@@ -58,7 +59,12 @@ export default function LoginScreen({ navigation }: LoginScreenProps) {
         const success = await login(email.trim(), password);
         setIsLoading(false);
 
-        if (!success) {
+        if (success) {
+            if (Platform.OS === 'android') {
+                ToastAndroid.show('Login successful', ToastAndroid.LONG);
+            }
+            // Navigation handled by AuthContext state update in MainNavigator
+        } else {
             Alert.alert('Login Failed', 'Invalid email or password');
         }
     };

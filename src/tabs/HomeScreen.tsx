@@ -29,7 +29,7 @@ interface HomeScreenProps {
 
 export default function HomeScreen({ navigation }: HomeScreenProps) {
     const [searchQuery, setSearchQuery] = useState('');
-    const { vehicles, savedNewsIds, toggleSavedNews } = useApp();
+    const { vehicles, savedNewsIds, toggleSavedNews, fetchVehicles, isLoading: isAppLoading } = useApp();
     const [selectedVehicleId, setSelectedVehicleId] = useState<string | null>(null);
     const [isVehicleModalVisible, setVehicleModalVisible] = useState(false);
     const [refreshing, setRefreshing] = useState(false);
@@ -135,15 +135,18 @@ export default function HomeScreen({ navigation }: HomeScreenProps) {
         }
     };
 
-    const onRefresh = React.useCallback(() => {
+    const onRefresh = React.useCallback(async () => {
         setRefreshing(true);
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-        // Simulate refresh
-        setTimeout(() => {
-            setRefreshing(false);
+        try {
+            await fetchVehicles();
             Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-        }, 1000);
-    }, []);
+        } catch (error) {
+            console.error('Refresh error:', error);
+        } finally {
+            setRefreshing(false);
+        }
+    }, [fetchVehicles]);
 
     return (
         <View style={styles.container}>

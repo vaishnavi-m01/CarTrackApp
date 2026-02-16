@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
     View,
     Text,
@@ -7,8 +7,11 @@ import {
     TouchableOpacity,
     TextInput,
     Alert,
+    Keyboard,
     KeyboardAvoidingView,
     Platform,
+    ToastAndroid,
+    ActivityIndicator,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -16,23 +19,40 @@ import { Ionicons } from '@expo/vector-icons';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { COLORS, SIZES, SHADOWS } from '../constants/theme';
 import { useApp } from '../context/AppContext';
+import apiClient from '../api/apiClient';
 
 export default function AddTripScreen({ navigation, route }: { navigation: any, route: any }) {
-    const { vehicles, addTrip } = useApp();
+    const { vehicles } = useApp();
     const insets = useSafeAreaInsets();
 
+    const tripToEdit = route.params?.trip;
+    const isEdit = !!tripToEdit;
+
     // Default to passed vehicleId or the first vehicle
-    const initialVehicleId = route.params?.vehicleId || (vehicles.length > 0 ? vehicles[0].id : '');
+    const initialVehicleId = route.params?.vehicleId || tripToEdit?.vehicleId?.toString() || (vehicles.length > 0 ? vehicles[0].id : '');
 
     const [selectedVehicleId, setSelectedVehicleId] = useState(initialVehicleId);
-    const [title, setTitle] = useState('');
-    const [date, setDate] = useState(new Date());
-    const [distance, setDistance] = useState('');
-    const [duration, setDuration] = useState('');
-    const [note, setNote] = useState('');
+    const [title, setTitle] = useState(tripToEdit?.title || '');
+    const [date, setDate] = useState(tripToEdit?.date ? new Date(tripToEdit.date) : new Date());
+    const [distance, setDistance] = useState(tripToEdit?.distanceKm?.toString() || '');
+    const [duration, setDuration] = useState(tripToEdit?.duration || '');
+    const [note, setNote] = useState(tripToEdit?.note || '');
     const [showDatePicker, setShowDatePicker] = useState(false);
+    const [isVehicleDropdownOpen, setIsVehicleDropdownOpen] = useState(false);
+    const [isKeyboardVisible, setIsKeyboardVisible] = useState(false);
+    const [isSaving, setIsSaving] = useState(false);
 
-    const handleSubmit = () => {
+    React.useEffect(() => {
+        const showSubscription = Keyboard.addListener('keyboardDidShow', () => setIsKeyboardVisible(true));
+        const hideSubscription = Keyboard.addListener('keyboardDidHide', () => setIsKeyboardVisible(false));
+
+        return () => {
+            showSubscription.remove();
+            hideSubscription.remove();
+        };
+    }, []);
+
+    const handleSubmit = async () => {
         if (!selectedVehicleId) {
             Alert.alert('Error', 'Please select a vehicle');
             return;
@@ -41,7 +61,7 @@ export default function AddTripScreen({ navigation, route }: { navigation: any, 
             Alert.alert('Error', 'Please enter a trip title');
             return;
         }
-        const dist = parseFloat(distance);
+        const dist = parseFloat(distance.replace(/,/g, ''));
         if (!distance || isNaN(dist) || dist <= 0) {
             Alert.alert('Error', 'Please enter a valid distance');
             return;
@@ -51,21 +71,40 @@ export default function AddTripScreen({ navigation, route }: { navigation: any, 
             return;
         }
 
-        const vehicle = vehicles.find(v => v.id === selectedVehicleId);
+        setIsSaving(true);
+        try {
+            const payload = {
+                id: isEdit ? tripToEdit.id : 0,
+                vehicleId: parseInt(selectedVehicleId),
+                title: title.trim(),
+                date: date.toISOString().split('T')[0],
+                distanceKm: dist,
+                duration: duration.trim(),
+                note: note.trim(),
+            };
 
-        addTrip({
-            vehicleId: selectedVehicleId,
-            vehicleName: vehicle ? `${vehicle.brand} ${vehicle.model}` : 'Unknown',
-            title: title.trim(),
-            date: date.toISOString(),
-            distance: dist,
-            duration: duration.trim(),
-            note: note.trim(),
-        });
+            let response;
+            if (isEdit) {
+                response = await apiClient.put(`/trips/${tripToEdit.id}`, payload);
+            } else {
+                response = await apiClient.post('/trips', payload);
+            }
 
-        Alert.alert('Success', 'Trip recorded!', [
-            { text: 'OK', onPress: () => navigation.goBack() }
-        ]);
+            if (response.status >= 200 && response.status < 300) {
+                if (Platform.OS === 'android') {
+                    ToastAndroid.show(
+                        `Trip ${isEdit ? 'updated' : 'recorded'} successfully`,
+                        ToastAndroid.SHORT
+                    );
+                }
+                navigation.goBack();
+            }
+        } catch (error) {
+            console.error('Error saving trip:', error);
+            Alert.alert('Error', 'Failed to save trip. Please try again.');
+        } finally {
+            setIsSaving(false);
+        }
     };
 
     const onChangeDate = (event: any, selectedDate?: Date) => {
@@ -91,32 +130,76 @@ export default function AddTripScreen({ navigation, route }: { navigation: any, 
                 <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
 
                     {/* Vehicle Selector */}
-                    <View style={styles.formCard}>
-                        <Text style={styles.formLabel}>
+                    <View style={styles.inputGroup}>
+                        <Text style={styles.label}>
                             Select Vehicle <Text style={styles.requiredStar}>*</Text>
                         </Text>
-                        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                            {vehicles.map((v) => (
-                                <TouchableOpacity
-                                    key={v.id}
-                                    style={[
-                                        styles.vehicleChip,
-                                        selectedVehicleId === v.id && styles.vehicleChipActive
-                                    ]}
-                                    onPress={() => setSelectedVehicleId(v.id)}
-                                >
-                                    <Text style={[
-                                        styles.vehicleChipText,
-                                        selectedVehicleId === v.id && styles.vehicleChipTextActive
-                                    ]}>{v.brand} {v.model}</Text>
-                                </TouchableOpacity>
-                            ))}
-                        </ScrollView>
+                        <TouchableOpacity
+                            style={[
+                                styles.dropdownBtn,
+                                isVehicleDropdownOpen && styles.dropdownBtnOpen
+                            ]}
+                            onPress={() => setIsVehicleDropdownOpen(!isVehicleDropdownOpen)}
+                            activeOpacity={0.7}
+                        >
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                                <Ionicons
+                                    name={vehicles.find(v => v.id === selectedVehicleId)?.vehicleType === 'bike' ? "bicycle-outline" : "car-outline"}
+                                    size={22}
+                                    color={COLORS.primary}
+                                />
+                                <Text style={styles.dropdownText}>
+                                    {vehicles.find(v => v.id === selectedVehicleId)
+                                        ? `${vehicles.find(v => v.id === selectedVehicleId).brand} ${vehicles.find(v => v.id === selectedVehicleId).model}`
+                                        : 'Select Vehicle'}
+                                </Text>
+                            </View>
+                            <Ionicons
+                                name={isVehicleDropdownOpen ? "chevron-up" : "chevron-down"}
+                                size={20}
+                                color={COLORS.textLight}
+                            />
+                        </TouchableOpacity>
+
+                        {isVehicleDropdownOpen && (
+                            <View style={styles.inlineDropdown}>
+                                {vehicles.map((v) => (
+                                    <TouchableOpacity
+                                        key={v.id}
+                                        style={[
+                                            styles.vehicleOption,
+                                            selectedVehicleId === v.id && styles.vehicleOptionActive
+                                        ]}
+                                        onPress={() => {
+                                            setSelectedVehicleId(v.id);
+                                            setIsVehicleDropdownOpen(false);
+                                        }}
+                                    >
+                                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                                            <Ionicons
+                                                name={v.vehicleType === 'bike' ? "bicycle" : "car"}
+                                                size={20}
+                                                color={selectedVehicleId === v.id ? COLORS.white : COLORS.primary}
+                                            />
+                                            <Text style={[
+                                                styles.vehicleOptionText,
+                                                selectedVehicleId === v.id && styles.vehicleOptionTextActive
+                                            ]}>
+                                                {v.brand} {v.model}
+                                            </Text>
+                                        </View>
+                                        {selectedVehicleId === v.id && (
+                                            <Ionicons name="checkmark-circle" size={18} color={COLORS.white} />
+                                        )}
+                                    </TouchableOpacity>
+                                ))}
+                            </View>
+                        )}
                     </View>
 
                     {/* Trip Details */}
-                    <View style={styles.formCard}>
-                        <Text style={styles.formLabel}>
+                    <View style={styles.inputGroup}>
+                        <Text style={styles.label}>
                             Trip Title <Text style={styles.requiredStar}>*</Text>
                         </Text>
                         <TextInput
@@ -129,21 +212,21 @@ export default function AddTripScreen({ navigation, route }: { navigation: any, 
                     </View>
 
                     <View style={styles.row}>
-                        <View style={[styles.formCard, { flex: 1, marginRight: 10 }]}>
-                            <Text style={styles.formLabel}>
+                        <View style={[styles.inputGroup, { flex: 1, marginRight: 10 }]}>
+                            <Text style={styles.label}>
                                 Date <Text style={styles.requiredStar}>*</Text>
                             </Text>
                             <TouchableOpacity
-                                style={styles.dateSelector}
+                                style={styles.dateDisplay}
                                 onPress={() => setShowDatePicker(true)}
                             >
-                                <Ionicons name="calendar-outline" size={18} color={COLORS.primary} style={{ marginRight: 8 }} />
+                                <Ionicons name="calendar-outline" size={18} color={COLORS.primary} />
                                 <Text style={styles.dateText}>{formatDate(date)}</Text>
                             </TouchableOpacity>
                         </View>
 
-                        <View style={[styles.formCard, { flex: 1 }]}>
-                            <Text style={styles.formLabel}>
+                        <View style={[styles.inputGroup, { flex: 1 }]}>
+                            <Text style={styles.label}>
                                 Distance (km) <Text style={styles.requiredStar}>*</Text>
                             </Text>
                             <TextInput
@@ -157,8 +240,8 @@ export default function AddTripScreen({ navigation, route }: { navigation: any, 
                         </View>
                     </View>
 
-                    <View style={styles.formCard}>
-                        <Text style={styles.formLabel}>
+                    <View style={styles.inputGroup}>
+                        <Text style={styles.label}>
                             Duration <Text style={styles.requiredStar}>*</Text>
                         </Text>
                         <TextInput
@@ -166,13 +249,13 @@ export default function AddTripScreen({ navigation, route }: { navigation: any, 
                             value={duration}
                             onChangeText={setDuration}
                             placeholder="e.g. 6h 30m"
-                            maxLength={10}
+                            maxLength={500}
                         />
                     </View>
 
                     {/* Note */}
-                    <View style={styles.formCard}>
-                        <Text style={styles.formLabel}>Note (Optional)</Text>
+                    <View style={styles.inputGroup}>
+                        <Text style={styles.label}>Note (Optional)</Text>
                         <TextInput
                             style={styles.input}
                             value={note}
@@ -181,6 +264,9 @@ export default function AddTripScreen({ navigation, route }: { navigation: any, 
                             maxLength={50}
                         />
                     </View>
+
+
+                    <View style={{ height: 120 }} />
 
                     {showDatePicker && (
                         <DateTimePicker
@@ -191,59 +277,75 @@ export default function AddTripScreen({ navigation, route }: { navigation: any, 
                             maximumDate={new Date()}
                         />
                     )}
-
                 </ScrollView>
 
                 {/* Sticky Footer */}
-                <View style={[
-                    styles.footer,
-                    { paddingBottom: Math.max(insets.bottom, 20) }
-                ]}>
-                    <TouchableOpacity
-                        style={styles.submitBtn}
-                        onPress={handleSubmit}
-                        activeOpacity={0.8}
-                    >
-                        <LinearGradient
-                            colors={[COLORS.primary, COLORS.primaryDark]}
-                            style={styles.submitGradient}
-                            start={{ x: 0, y: 0 }}
-                            end={{ x: 1, y: 1 }}
-                        >
-                            <Ionicons name="checkmark-circle" size={24} color={COLORS.white} />
-                            <Text style={styles.submitText}>Save Trip</Text>
-                        </LinearGradient>
-                    </TouchableOpacity>
-                </View>
+                {!isKeyboardVisible && (
+                    <View style={[
+                        styles.footer,
+                        { paddingBottom: Math.max(insets.bottom, 20) }
+                    ]}>
+                        <View style={styles.footerButtons}>
+                            {!isSaving && (
+                                <TouchableOpacity
+                                    style={[styles.submitBtn, styles.cancelBtn]}
+                                    onPress={() => navigation.goBack()}
+                                    activeOpacity={0.7}
+                                >
+                                    <Text style={styles.cancelBtnText}>Cancel</Text>
+                                </TouchableOpacity>
+                            )}
 
+                            <TouchableOpacity
+                                style={styles.submitBtn}
+                                onPress={handleSubmit}
+                                activeOpacity={0.8}
+                                disabled={isSaving}
+                            >
+                                <LinearGradient
+                                    colors={[COLORS.primary, COLORS.primaryDark]}
+                                    style={styles.submitGradient}
+                                    start={{ x: 0, y: 0 }}
+                                    end={{ x: 1, y: 1 }}
+                                >
+                                    {isSaving ? (
+                                        <ActivityIndicator size="small" color={COLORS.white} />
+                                    ) : (
+                                        <Text style={styles.submitText}>Save Trip</Text>
+                                    )}
+                                </LinearGradient>
+                            </TouchableOpacity>
+                        </View>
+                    </View>
+                )}
             </View>
-        </KeyboardAvoidingView>
+        </KeyboardAvoidingView >
     );
 }
 
 const styles = StyleSheet.create({
     container: { flex: 1, backgroundColor: COLORS.background },
-    content: { padding: SIZES.padding, paddingBottom: 40 },
-    formCard: { backgroundColor: COLORS.white, padding: 15, borderRadius: 15, marginBottom: 15, ...SHADOWS.light },
-    formLabel: { fontSize: SIZES.body2, color: COLORS.textLight, marginBottom: 10, fontWeight: '600' },
-    input: { fontSize: SIZES.body1, color: COLORS.text, borderBottomWidth: 1, borderBottomColor: COLORS.border, paddingBottom: 8 },
+    content: { padding: SIZES.padding, paddingTop: 10 },
+    inputGroup: { marginBottom: 12 },
+    label: { fontSize: 14, fontWeight: 'bold', color: COLORS.text, marginBottom: 6, marginTop: 4 },
+    input: { backgroundColor: COLORS.white, borderRadius: 12, padding: 14, fontSize: 15, color: COLORS.text, borderWidth: 1, borderColor: '#e2e8f0' },
     requiredStar: { color: COLORS.danger, fontWeight: 'bold' },
-    vehicleChip: { paddingVertical: 8, paddingHorizontal: 15, borderRadius: 20, borderWidth: 1, borderColor: COLORS.border, marginRight: 10 },
-    vehicleChipActive: { backgroundColor: COLORS.primary, borderColor: COLORS.primary },
-    vehicleChipText: { color: COLORS.textLight, fontWeight: '600' },
-    vehicleChipTextActive: { color: COLORS.white },
     row: { flexDirection: 'row' },
-    dateSelector: { flexDirection: 'row', alignItems: 'center', paddingVertical: 5 },
-    dateText: { fontSize: SIZES.body1, color: COLORS.text },
-    footer: {
-        paddingHorizontal: SIZES.padding,
-        paddingTop: 15,
-        backgroundColor: COLORS.white,
-        borderTopWidth: 1,
-        borderTopColor: '#F1F5F9',
-        ...SHADOWS.medium,
-    },
-    submitBtn: { width: '100%' },
-    submitGradient: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 15, borderRadius: 25, gap: 10 },
-    submitText: { fontSize: SIZES.body1, fontWeight: 'bold', color: COLORS.white },
+    dateDisplay: { flexDirection: 'row', alignItems: 'center', backgroundColor: COLORS.white, padding: 14, borderRadius: 12, borderWidth: 1, borderColor: '#e2e8f0', gap: 10 },
+    dateText: { fontSize: 15, color: COLORS.text, fontWeight: '500' },
+    footer: { position: 'absolute', bottom: 0, left: 0, right: 0, paddingHorizontal: SIZES.padding, paddingTop: 15, backgroundColor: COLORS.white, borderTopWidth: 1, borderTopColor: '#F1F5F9', ...SHADOWS.medium },
+    footerButtons: { flexDirection: 'row', gap: 15 },
+    submitBtn: { flex: 1, borderRadius: 16, overflow: 'hidden', ...SHADOWS.medium },
+    submitGradient: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 16, borderRadius: 25, gap: 10 },
+    submitText: { fontSize: 16, fontWeight: 'bold', color: COLORS.white },
+    cancelBtn: { backgroundColor: '#F1F5F9', borderWidth: 1, borderColor: '#E2E8F0', alignItems: 'center', justifyContent: 'center', shadowOpacity: 0, elevation: 0 },
+    cancelBtnText: { color: COLORS.textLight, fontSize: 16, fontWeight: '600' },
+    dropdownBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: COLORS.white, borderRadius: 12, padding: 14, borderWidth: 1, borderColor: '#e2e8f0' },
+    dropdownBtnOpen: { borderBottomLeftRadius: 0, borderBottomRightRadius: 0, borderBottomWidth: 0 },
+    dropdownText: { fontSize: 15, color: COLORS.text, fontWeight: '500' },
+    inlineDropdown: { backgroundColor: COLORS.white, borderWidth: 1, borderColor: '#e2e8f0', borderTopWidth: 0, borderBottomLeftRadius: 12, borderBottomRightRadius: 12, padding: 5, marginTop: -1, ...SHADOWS.light },
+    vehicleOption: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 12, borderRadius: 8, marginBottom: 2 },
+    vehicleOptionActive: { backgroundColor: COLORS.primary },
+    vehicleOptionText: { fontSize: 14, color: COLORS.text, fontWeight: '500' },
+    vehicleOptionTextActive: { color: COLORS.white },
 });

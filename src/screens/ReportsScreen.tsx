@@ -92,7 +92,7 @@ export default function ReportsScreen({ navigation, route }: { navigation: any; 
     return (
         <View style={styles.container}>
             {/* Header */}
-            <View style={[styles.header, { paddingTop: insets.top + 10 }]}>
+            {/* <View style={[styles.header, { paddingTop: insets.top + 10 }]}>
                 <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
                     <Ionicons name="arrow-back" size={24} color={COLORS.text} />
                 </TouchableOpacity>
@@ -103,7 +103,7 @@ export default function ReportsScreen({ navigation, route }: { navigation: any; 
                     </Text>
                 </View>
                 <View style={{ width: 40 }} />
-            </View>
+            </View> */}
 
             <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 40 }}>
                 {/* Dashboard Summary Cards */}

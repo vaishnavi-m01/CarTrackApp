@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
     View,
     Text,
@@ -8,13 +8,19 @@ import {
     TouchableOpacity,
     Platform,
     Alert,
+    Modal,
+    Keyboard,
+    KeyboardAvoidingView,
+    ToastAndroid,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import DateTimePicker from '@react-native-community/datetimepicker';
-import { useApp } from '../context/AppContext';
 import { COLORS, SIZES, SHADOWS } from '../constants/theme';
+import apiClient from '../api/apiClient';
+import { ActivityIndicator } from 'react-native';
+import { useApp } from '../context/AppContext';
 
 export default function AddServiceScreen({ navigation, route }: { navigation: any, route: any }) {
     const { vehicles, addExpense, updateVehicle } = useApp();
@@ -29,6 +35,34 @@ export default function AddServiceScreen({ navigation, route }: { navigation: an
     const [note, setNote] = useState('');
     const [date, setDate] = useState(new Date());
     const [showDatePicker, setShowDatePicker] = useState(false);
+    const [isSaving, setIsSaving] = useState(false);
+    const [isVehicleModalVisible, setIsVehicleModalVisible] = useState(false);
+    const [isKeyboardVisible, setIsKeyboardVisible] = useState(false);
+
+    useEffect(() => {
+        const showSubscription = Keyboard.addListener('keyboardDidShow', () => setIsKeyboardVisible(true));
+        const hideSubscription = Keyboard.addListener('keyboardDidHide', () => setIsKeyboardVisible(false));
+
+        return () => {
+            showSubscription.remove();
+            hideSubscription.remove();
+        };
+    }, []);
+
+    const isEdit = !!route.params?.service;
+    const serviceToEdit = route.params?.service;
+
+    useEffect(() => {
+        if (serviceToEdit) {
+            setTitle(serviceToEdit.serviceTitle);
+            setAmount(serviceToEdit.amount.toString());
+            setOdometer(serviceToEdit.odometer.toString());
+            setProvider(serviceToEdit.serviceCenter);
+            setNote(serviceToEdit.note);
+            setDate(new Date(serviceToEdit.date));
+            setSelectedVehicleId(serviceToEdit.vehicleId.toString());
+        }
+    }, [serviceToEdit]);
 
     const onChangeDate = (event: any, selectedDate?: Date) => {
         setShowDatePicker(false);
@@ -45,172 +79,255 @@ export default function AddServiceScreen({ navigation, route }: { navigation: an
         });
     };
 
-    const handleSave = () => {
+    const handleSave = async () => {
         if (!selectedVehicleId || !title || !amount || !odometer) {
             Alert.alert('Required Fields', 'Please fill in all mandatory fields (*)');
             return;
         }
 
-        const vehicle = vehicles.find(v => v.id === selectedVehicleId);
-        if (!vehicle) return;
+        setIsSaving(true);
+        try {
+            const payload = {
+                id: isEdit ? serviceToEdit.id : 0,
+                vehicleId: parseInt(selectedVehicleId),
+                serviceTitle: title,
+                odometer: parseInt(odometer.replace(/,/g, '')),
+                serviceCenter: provider,
+                amount: parseFloat(amount.replace(/,/g, '')),
+                date: date.toISOString().split('T')[0], // yyyy-mm-dd
+                note: note
+            };
 
-        // 1. Add as a service expense
-        addExpense({
-            type: 'Service',
-            amount: parseFloat(amount),
-            date: date.toISOString(),
-            vehicleId: selectedVehicleId,
-            vehicleName: `${vehicle.brand} ${vehicle.model}`,
-            note: `${title}${provider ? ` @ ${provider}` : ''}${note ? ` - ${note}` : ''}`,
-            icon: 'build',
-            color: COLORS.primary
-        });
+            let response;
+            if (isEdit) {
+                response = await apiClient.put(`/services/${serviceToEdit.id}`, payload);
+            } else {
+                response = await apiClient.post('/services', payload);
+            }
 
-        // 2. Update vehicle odometer if it's higher
-        const currentMileage = parseFloat(vehicle.mileage || '0');
-        const newOdometer = parseFloat(odometer);
-        if (newOdometer > currentMileage) {
-            updateVehicle(selectedVehicleId, {
-                mileage: odometer
-            });
+            if (response.status >= 200 && response.status < 300) {
+                // Update vehicle odometer if it's higher
+                const vehicle = vehicles.find(v => v.id === selectedVehicleId);
+                if (vehicle) {
+                    const currentMileage = parseFloat(vehicle.mileage || '0');
+                    const newOdometer = parseFloat(odometer.replace(/,/g, ''));
+                    if (newOdometer > currentMileage) {
+                        updateVehicle(selectedVehicleId, {
+                            mileage: odometer
+                        });
+                    }
+                }
+
+                if (Platform.OS === 'android') {
+                    ToastAndroid.show(
+                        `Service ${isEdit ? 'updated' : 'added'} successfully`,
+                        ToastAndroid.SHORT
+                    );
+                }
+                navigation.goBack();
+            }
+        } catch (error) {
+            console.error('Error saving service record:', error);
+            Alert.alert('Error', 'Failed to save service record. Please try again.');
+        } finally {
+            setIsSaving(false);
         }
-
-        Alert.alert('Success', 'Service record saved successfully!', [
-            { text: 'OK', onPress: () => navigation.goBack() }
-        ]);
     };
 
     return (
-        <View style={styles.container}>
-            <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-
-                <Text style={styles.label}>Select Vehicle <Text style={styles.required}>*</Text></Text>
-                <View style={styles.vehicleSelector}>
-                    {vehicles.map(v => (
+        <KeyboardAvoidingView
+            style={{ flex: 1 }}
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+            keyboardVerticalOffset={Platform.OS === 'ios' ? 80 : 0}
+        >
+            <View style={styles.container}>
+                <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+                    <View style={[styles.inputGroup, { marginTop: 0 }]}>
+                        <Text style={styles.label}>Select Vehicle <Text style={styles.required}>*</Text></Text>
                         <TouchableOpacity
-                            key={v.id}
                             style={[
-                                styles.vehicleChip,
-                                selectedVehicleId === v.id && styles.vehicleChipActive
+                                styles.dropdownBtn,
+                                isVehicleModalVisible && styles.dropdownBtnOpen
                             ]}
-                            onPress={() => setSelectedVehicleId(v.id)}
+                            onPress={() => setIsVehicleModalVisible(!isVehicleModalVisible)}
+                            activeOpacity={0.7}
                         >
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                                <Ionicons
+                                    name={vehicles.find(v => v.id === selectedVehicleId)?.vehicleType === 'bike' ? "bicycle-outline" : "car-outline"}
+                                    size={22}
+                                    color={COLORS.primary}
+                                />
+                                <Text style={styles.dropdownText}>
+                                    {vehicles.find(v => v.id === selectedVehicleId)
+                                        ? `${vehicles.find(v => v.id === selectedVehicleId).brand} ${vehicles.find(v => v.id === selectedVehicleId).model}`
+                                        : 'Select Vehicle'}
+                                </Text>
+                            </View>
                             <Ionicons
-                                name={v.vehicleType === 'bike' ? 'bicycle' : 'car'}
-                                size={16}
-                                color={selectedVehicleId === v.id ? COLORS.white : COLORS.textLight}
+                                name={isVehicleModalVisible ? "chevron-up" : "chevron-down"}
+                                size={20}
+                                color={COLORS.textLight}
                             />
-                            <Text style={[
-                                styles.vehicleChipText,
-                                selectedVehicleId === v.id && styles.vehicleChipTextActive
-                            ]}>{v.model}</Text>
                         </TouchableOpacity>
-                    ))}
-                </View>
 
-                <View style={styles.inputGroup}>
-                    <Text style={styles.label}>Service Title <Text style={styles.required}>*</Text></Text>
-                    <TextInput
-                        style={styles.input}
-                        placeholder="e.g. Engine Oil Change"
-                        value={title}
-                        onChangeText={setTitle}
-                        maxLength={40}
-                    />
-                </View>
+                        {/* Inline Vehicle Selection */}
+                        {isVehicleModalVisible && (
+                            <View style={styles.inlineDropdown}>
+                                {vehicles.map((item) => (
+                                    <TouchableOpacity
+                                        key={item.id}
+                                        style={[
+                                            styles.vehicleOption,
+                                            selectedVehicleId === item.id && styles.vehicleOptionActive
+                                        ]}
+                                        onPress={() => {
+                                            setSelectedVehicleId(item.id);
+                                            setIsVehicleModalVisible(false);
+                                        }}
+                                    >
+                                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                                            <Ionicons
+                                                name={item.vehicleType === 'bike' ? "bicycle" : "car"}
+                                                size={20}
+                                                color={selectedVehicleId === item.id ? COLORS.white : COLORS.primary}
+                                            />
+                                            <Text style={[
+                                                styles.vehicleOptionText,
+                                                selectedVehicleId === item.id && styles.vehicleOptionTextActive
+                                            ]}>
+                                                {item.brand} {item.model}
+                                            </Text>
+                                        </View>
+                                        {selectedVehicleId === item.id && (
+                                            <Ionicons name="checkmark-circle" size={18} color={COLORS.white} />
+                                        )}
+                                    </TouchableOpacity>
+                                ))}
+                            </View>
+                        )}
+                    </View>
 
-                <View style={styles.row}>
-                    <View style={[styles.inputGroup, { flex: 1, marginRight: 10 }]}>
-                        <Text style={styles.label}>Amount (₹) <Text style={styles.required}>*</Text></Text>
+                    <View style={styles.inputGroup}>
+                        <Text style={styles.label}>Service Title <Text style={styles.required}>*</Text></Text>
                         <TextInput
                             style={styles.input}
-                            placeholder="0.00"
-                            value={amount}
-                            onChangeText={setAmount}
-                            keyboardType="numeric"
-                            maxLength={7}
+                            placeholder="e.g. Engine Oil Change"
+                            value={title}
+                            onChangeText={setTitle}
+                            maxLength={40}
                         />
                     </View>
-                    <View style={[styles.inputGroup, { flex: 1, marginLeft: 10 }]}>
-                        <Text style={styles.label}>Odometer (km) <Text style={styles.required}>*</Text></Text>
+
+                    <View style={styles.row}>
+                        <View style={[styles.inputGroup, { flex: 1, marginRight: 10 }]}>
+                            <Text style={styles.label}>Amount (₹) <Text style={styles.required}>*</Text></Text>
+                            <TextInput
+                                style={styles.input}
+                                placeholder="0.00"
+                                value={amount}
+                                onChangeText={setAmount}
+                                keyboardType="numeric"
+                                maxLength={7}
+                            />
+                        </View>
+                        <View style={[styles.inputGroup, { flex: 1, marginLeft: 10 }]}>
+                            <Text style={styles.label}>Odometer (km) <Text style={styles.required}>*</Text></Text>
+                            <TextInput
+                                style={styles.input}
+                                placeholder="Current km"
+                                value={odometer}
+                                onChangeText={setOdometer}
+                                keyboardType="numeric"
+                                maxLength={8}
+                            />
+                        </View>
+                    </View>
+
+                    <View style={styles.inputGroup}>
+                        <Text style={styles.label}>Service Center / Provider</Text>
                         <TextInput
                             style={styles.input}
-                            placeholder="Current km"
-                            value={odometer}
-                            onChangeText={setOdometer}
-                            keyboardType="numeric"
-                            maxLength={8}
+                            placeholder="e.g. Bosch Car Service"
+                            value={provider}
+                            onChangeText={setProvider}
+                        // maxLength={300}
                         />
                     </View>
-                </View>
 
-                <View style={styles.inputGroup}>
-                    <Text style={styles.label}>Service Center / Provider</Text>
-                    <TextInput
-                        style={styles.input}
-                        placeholder="e.g. Bosch Car Service"
-                        value={provider}
-                        onChangeText={setProvider}
-                        maxLength={30}
-                    />
-                </View>
+                    <View style={styles.inputGroup}>
+                        <Text style={styles.label}>Service Date <Text style={styles.required}>*</Text></Text>
+                        <TouchableOpacity
+                            style={styles.datePickerBtn}
+                            onPress={() => setShowDatePicker(true)}
+                        >
+                            <Ionicons name="calendar-outline" size={20} color={COLORS.primary} />
+                            <Text style={styles.dateText}>{formatDate(date)}</Text>
+                        </TouchableOpacity>
+                    </View>
 
-                <View style={styles.inputGroup}>
-                    <Text style={styles.label}>Service Date <Text style={styles.required}>*</Text></Text>
-                    <TouchableOpacity
-                        style={styles.datePickerBtn}
-                        onPress={() => setShowDatePicker(true)}
-                    >
-                        <Ionicons name="calendar-outline" size={20} color={COLORS.primary} />
-                        <Text style={styles.dateText}>{formatDate(date)}</Text>
-                    </TouchableOpacity>
-                </View>
+                    {showDatePicker && (
+                        <DateTimePicker
+                            value={date}
+                            mode="date"
+                            display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                            onChange={onChangeDate}
+                        />
+                    )}
 
-                {showDatePicker && (
-                    <DateTimePicker
-                        value={date}
-                        mode="date"
-                        display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-                        onChange={onChangeDate}
-                    />
+                    <View style={styles.inputGroup}>
+                        <Text style={styles.label}>Additional Notes</Text>
+                        <TextInput
+                            style={[styles.input, styles.textArea]}
+                            placeholder="Any extra details..."
+                            value={note}
+                            onChangeText={setNote}
+                            multiline
+                            numberOfLines={4}
+                            maxLength={100}
+                        />
+                    </View>
+
+                    <View style={{ height: 120 }} />
+                </ScrollView>
+
+                {!isKeyboardVisible && (
+                    <View style={[
+                        styles.footer,
+                        { paddingBottom: Math.max(insets.bottom, 20) }
+                    ]}>
+                        <View style={styles.footerButtons}>
+                            <TouchableOpacity
+                                style={[styles.saveBtn, styles.cancelBtn]}
+                                onPress={() => navigation.goBack()}
+                                activeOpacity={0.7}
+                            >
+                                <Text style={styles.cancelBtnText}>Cancel</Text>
+                            </TouchableOpacity>
+
+                            <TouchableOpacity
+                                style={styles.saveBtn}
+                                onPress={handleSave}
+                                activeOpacity={0.8}
+                            >
+                                <LinearGradient
+                                    colors={[COLORS.primary, COLORS.primaryDark]}
+                                    style={styles.saveGradient}
+                                    start={{ x: 0, y: 0 }}
+                                    end={{ x: 1, y: 1 }}
+                                >
+                                    {isSaving ? (
+                                        <ActivityIndicator color={COLORS.white} />
+                                    ) : (
+                                        <Text style={styles.saveBtnText}>{isEdit ? 'Update' : 'Save'}</Text>
+                                    )}
+                                </LinearGradient>
+                            </TouchableOpacity>
+                        </View>
+                    </View>
                 )}
-
-                <View style={styles.inputGroup}>
-                    <Text style={styles.label}>Additional Notes</Text>
-                    <TextInput
-                        style={[styles.input, styles.textArea]}
-                        placeholder="Any extra details..."
-                        value={note}
-                        onChangeText={setNote}
-                        multiline
-                        numberOfLines={4}
-                        maxLength={100}
-                    />
-                </View>
-
-                <View style={{ height: 100 }} />
-            </ScrollView>
-
-            <View style={[
-                styles.footer,
-                { paddingBottom: Math.max(insets.bottom, 20) }
-            ]}>
-                <TouchableOpacity
-                    style={styles.saveBtn}
-                    onPress={handleSave}
-                    activeOpacity={0.8}
-                >
-                    <LinearGradient
-                        colors={[COLORS.primary, COLORS.primaryDark]}
-                        style={styles.saveGradient}
-                        start={{ x: 0, y: 0 }}
-                        end={{ x: 1, y: 1 }}
-                    >
-                        <Text style={styles.saveBtnText}>Save Service Record</Text>
-                    </LinearGradient>
-                </TouchableOpacity>
             </View>
-        </View>
+        </KeyboardAvoidingView>
     );
 }
 
@@ -221,13 +338,14 @@ const styles = StyleSheet.create({
     },
     content: {
         padding: SIZES.padding,
+        paddingTop: 10,
     },
     label: {
         fontSize: 14,
         fontWeight: 'bold',
         color: COLORS.text,
-        marginBottom: 8,
-        marginTop: 16,
+        marginBottom: 6,
+        marginTop: 4,
     },
     required: {
         color: COLORS.danger,
@@ -262,7 +380,7 @@ const styles = StyleSheet.create({
         color: COLORS.white,
     },
     inputGroup: {
-        marginBottom: 16,
+        marginBottom: 12,
     },
     input: {
         backgroundColor: COLORS.white,
@@ -305,18 +423,87 @@ const styles = StyleSheet.create({
         borderTopColor: '#f1f5f9',
     },
     saveBtn: {
+        flex: 1,
         borderRadius: 16,
         overflow: 'hidden',
         ...SHADOWS.medium,
     },
     saveGradient: {
-        paddingVertical: 18,
+        paddingVertical: 16,
         alignItems: 'center',
         justifyContent: 'center',
     },
     saveBtnText: {
         color: COLORS.white,
-        fontSize: 18,
+        fontSize: 16,
         fontWeight: 'bold',
+    },
+    footerButtons: {
+        flexDirection: 'row',
+        gap: 15,
+    },
+    cancelBtn: {
+        backgroundColor: '#F1F5F9',
+        borderWidth: 1,
+        borderColor: '#E2E8F0',
+        alignItems: 'center',
+        justifyContent: 'center',
+        shadowOpacity: 0,
+        elevation: 0,
+    },
+    cancelBtnText: {
+        color: COLORS.textLight,
+        fontSize: 16,
+        fontWeight: '600',
+    },
+    dropdownBtn: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        backgroundColor: COLORS.white,
+        borderRadius: 12,
+        padding: 14,
+        borderWidth: 1,
+        borderColor: '#e2e8f0',
+    },
+    dropdownBtnOpen: {
+        borderBottomLeftRadius: 0,
+        borderBottomRightRadius: 0,
+        borderBottomWidth: 0,
+    },
+    dropdownText: {
+        fontSize: 15,
+        color: COLORS.text,
+        fontWeight: '500',
+    },
+    inlineDropdown: {
+        backgroundColor: COLORS.white,
+        borderWidth: 1,
+        borderColor: '#e2e8f0',
+        borderTopWidth: 0,
+        borderBottomLeftRadius: 12,
+        borderBottomRightRadius: 12,
+        padding: 5,
+        marginTop: -1,
+        ...SHADOWS.light,
+    },
+    vehicleOption: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        padding: 12,
+        borderRadius: 8,
+        marginBottom: 2,
+    },
+    vehicleOptionActive: {
+        backgroundColor: COLORS.primary,
+    },
+    vehicleOptionText: {
+        fontSize: 14,
+        color: COLORS.text,
+        fontWeight: '500',
+    },
+    vehicleOptionTextActive: {
+        color: COLORS.white,
     },
 });

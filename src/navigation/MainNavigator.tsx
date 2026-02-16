@@ -27,6 +27,7 @@ import AddExpenseScreen from '../screens/AddExpenseScreen';
 import MyVehiclesScreen from '../screens/MyVehiclesScreen';
 import VehicleLogsScreen from '../screens/VehicleLogsScreen';
 import VehicleDocumentsScreen from '../screens/VehicleDocumentsScreen';
+import AddDocumentScreen from '../screens/AddDocumentScreen';
 import ExpenseHistoryScreen from '../screens/ExpenseHistoryScreen';
 import GalleryScreen from '../screens/GalleryScreen';
 import TripsScreen from '../screens/TripsScreen';
@@ -49,6 +50,7 @@ import PostDetailScreen from '../screens/PostDetailScreen';
 import ReportsScreen from '../screens/ReportsScreen';
 import { StoryGroup } from '../types/Story';
 import { useAuth } from '../context/AuthContext';
+import { useApp } from '../context/AppContext';
 import { CommunityPost } from '../types/Community';
 import SplashScreen from '../screens/SplashScreen';
 
@@ -80,17 +82,18 @@ export type RootStackParamList = {
     Comparison: undefined;
     LoanCalculator: undefined;
     AddVehicle: undefined;
-    AddFuel: undefined;
+    AddFuel: { vehicleId?: string; fuelLog?: any };
     AddExpense: undefined;
     MyVehicles: undefined;
     VehicleLogs: { vehicle: any };
     Expenses: undefined;
     VehicleDocuments: { vehicleId: string };
+    AddDocument: { vehicleId: string; document?: any };
     ExpenseHistory: { vehicleId?: string };
     Gallery: { vehicleId?: string };
     Trips: { vehicleId?: string };
-    AddTrip: { vehicleId?: string };
-    RenewInsurance: { vehicleId?: string };
+    AddTrip: { vehicleId?: string; trip?: any };
+    RenewInsurance: { vehicleId?: string; insurance?: any };
     Insurance: { vehicleId?: string };
     ServiceRecords: { vehicleId?: string };
     AddService: { vehicleId?: string };
@@ -172,6 +175,7 @@ function TabNavigator() {
 
 export default function MainNavigator() {
     const { user, isLoading, hasSeenSplash } = useAuth();
+    const { vehicles } = useApp();
 
 
     if (isLoading) {
@@ -219,14 +223,59 @@ export default function MainNavigator() {
                     <Stack.Screen name="AddExpense" component={AddExpenseScreen} options={{ title: 'Add Expense' }} />
                     <Stack.Screen name="MyVehicles" component={MyVehiclesScreen} options={{ title: 'My Vehicles' }} />
                     <Stack.Screen name="VehicleLogs" component={VehicleLogsScreen} options={{ title: 'Vehicle Logs' }} />
-                    <Stack.Screen name="VehicleDocuments" component={VehicleDocumentsScreen} options={{ title: 'Vehicle Documents' }} />
+                    <Stack.Screen
+                        name="VehicleDocuments"
+                        component={VehicleDocumentsScreen}
+                        options={({ route }: any) => {
+                            const vehicleId = route.params?.vehicleId;
+                            const vehicle = vehicles.find(v => v.id === vehicleId);
+                            return {
+                                title: 'Vehicle Documents',
+                                headerSubtitle: vehicle ? `${vehicle.brand} ${vehicle.model} • ${vehicle.registration}` : undefined
+                            } as any;
+                        }}
+                    />
+                    <Stack.Screen name="AddDocument" component={AddDocumentScreen} options={{ title: 'Add Document' }} />
                     <Stack.Screen name="ExpenseHistory" component={ExpenseHistoryScreen} options={{ headerShown: true }} />
                     {/* <Stack.Screen name="Gallery" component={GalleryScreen} options={{ title: 'Gallery' }} /> */}
-                    <Stack.Screen name="Trips" component={TripsScreen} options={{ title: 'My Trips' }} />
+                    <Stack.Screen
+                        name="Trips"
+                        component={TripsScreen}
+                        options={({ route }: any) => {
+                            const vehicleId = route.params?.vehicleId;
+                            const vehicle = vehicles.find(v => v.id === vehicleId);
+                            return {
+                                title: 'My Trips',
+                                headerSubtitle: vehicle ? `${vehicle.brand} ${vehicle.model} • ${vehicle.registration}` : undefined
+                            } as any;
+                        }}
+                    />
                     <Stack.Screen name="AddTrip" component={AddTripScreen} options={{ title: 'Start New Trip' }} />
                     <Stack.Screen name="RenewInsurance" component={RenewInsuranceScreen} options={{ title: 'Renew Policy' }} />
-                    <Stack.Screen name="Insurance" component={InsuranceScreen} options={{ title: 'Insurance' }} />
-                    <Stack.Screen name="ServiceRecords" component={ServiceRecordsScreen} options={{ title: 'Service Records' }} />
+                    <Stack.Screen
+                        name="Insurance"
+                        component={InsuranceScreen}
+                        options={({ route }: any) => {
+                            const vehicleId = route.params?.vehicleId;
+                            const vehicle = vehicles.find(v => v.id === vehicleId);
+                            return {
+                                title: 'Insurance',
+                                headerSubtitle: vehicle ? `${vehicle.brand} ${vehicle.model} • ${vehicle.registration}` : undefined
+                            } as any;
+                        }}
+                    />
+                    <Stack.Screen
+                        name="ServiceRecords"
+                        component={ServiceRecordsScreen}
+                        options={({ route }: any) => {
+                            const vehicleId = route.params?.vehicleId;
+                            const vehicle = vehicles.find(v => v.id === vehicleId);
+                            return {
+                                title: 'Service Records',
+                                headerSubtitle: vehicle ? `${vehicle.brand} ${vehicle.model} • ${vehicle.registration}` : undefined
+                            } as any;
+                        }}
+                    />
                     <Stack.Screen name="AddService" component={AddServiceScreen} options={{ title: 'Log Service' }} />
                     <Stack.Screen name="VehicleSpec" component={VehicleSpecScreen} options={{ headerShown: false }} />
                     <Stack.Screen name="Wishlist" component={WishlistScreen} options={{ headerShown: true, title: 'Wishlist', headerSubtitle: 'Your favorite cars' } as any} />

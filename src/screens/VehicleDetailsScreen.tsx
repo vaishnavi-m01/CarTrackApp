@@ -15,7 +15,7 @@ import {
 } from 'react-native';
 import * as ExpoLinking from 'expo-linking';
 import { LinearGradient } from 'expo-linear-gradient';
-import { Ionicons } from '@expo/vector-icons';
+import { Ionicons, MaterialIcons } from '@expo/vector-icons';
 import * as Sharing from 'expo-sharing';
 import * as IntentLauncher from 'expo-intent-launcher';
 import * as FileSystem from 'expo-file-system';
@@ -30,8 +30,17 @@ interface QuickAction {
     color: string;
 }
 
+const formatDateHeader = (dateString?: string) => {
+    if (!dateString) return 'N/A';
+    const date = new Date(dateString);
+    const day = String(date.getDate()).padStart(2, '0');
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const year = date.getFullYear();
+    return `${day}-${month}-${year}`;
+};
+
 export default function VehicleDetailsScreen({ navigation, route }: { navigation: any; route: any }) {
-    const { documents, vehicles, expenses, fuelLogs } = useApp();
+    const { documents, vehicles, expenses, fuelLogs, trips } = useApp();
     const routeVehicle = route?.params?.vehicle;
     const routeVehicleId = route?.params?.id;
 
@@ -158,26 +167,127 @@ export default function VehicleDetailsScreen({ navigation, route }: { navigation
     const vehicleExpenses = expenses.filter(e => e.vehicleId === vehicle.id);
     const vehicleFuelLogs = fuelLogs.filter(f => f.vehicleId === vehicle.id);
 
-    const totalExpenseAmount = vehicleExpenses.reduce((sum, e) => sum + e.amount, 0);
-    const totalFuelAmount = vehicleFuelLogs.reduce((sum, f) => sum + f.totalCost, 0);
-    const totalOwnershipCost = totalExpenseAmount + totalFuelAmount;
+    const fuelSpent = vehicleFuelLogs.reduce((sum, f) => sum + f.totalCost, 0);
+    const maintenanceCost = vehicleExpenses
+        .filter(e => e.type === 'Service' || e.type === 'Repair' || e.type === 'Parts')
+        .reduce((sum, e) => sum + e.amount, 0);
 
-    const currentMileage = parseInt(vehicle.mileage?.replace(/[^0-9]/g, '') || '0');
-    const costPerKm = currentMileage > 0 ? (totalOwnershipCost / currentMileage).toFixed(2) : '0.00';
+    // If no logs, use purchase price as baseline if available
+    const purchasePrice = parseFloat(vehicle.purchasePrice?.toString().replace(/[^0-9.]/g, '') || '0');
+    const totalOwnershipCost = purchasePrice + maintenanceCost + fuelSpent;
+
+    const currentMileage = parseInt(vehicle.mileage?.toString().replace(/[^0-9]/g, '') || '0');
+    const costPerKm = (currentMileage > 100 && totalOwnershipCost > 0)
+        ? (totalOwnershipCost / currentMileage).toFixed(2)
+        : '0.00';
+
+    // Daily Cost Logic: (Operational Costs) / Days Owned
+    const pDate = vehicle.purchaseDate ? new Date(vehicle.purchaseDate) : new Date();
+    const daysSincePurchase = Math.max(1, Math.ceil((new Date().getTime() - pDate.getTime()) / (1000 * 60 * 60 * 24)));
+    const dailyCost = ((fuelSpent + maintenanceCost) / daysSincePurchase).toFixed(0);
 
     const insets = useSafeAreaInsets();
     const HEADER_HEIGHT = 280 + insets.top;
 
-    const healthItems = [
-        { label: 'Odometer', status: 'Good', color: '#4ade80', icon: 'speedometer-outline' },
-        { label: 'Battery', status: 'Good', color: '#4ade80', icon: 'battery-charging-outline' },
-        { label: 'Tyres', status: 'Good', color: '#ffb347', icon: 'disc-outline' },
-        { label: 'Fluids', status: 'OK', color: '#4ade80', icon: 'water-outline' },
-    ];
+    // --- Dynamic Vehicle Health Logic ---
+    const getHealthItems = () => {
+        const mileage = currentMileage;
+        const items = [
+            {
+                label: 'Odometer',
+                status: mileage < 5000 ? 'Excellent' : mileage < 20000 ? 'Good' : mileage < 50000 ? 'Fair' : 'Monitor',
+                color: mileage < 20000 ? '#4ade80' : mileage < 50000 ? '#fbbf24' : '#f87171',
+                icon: 'speedometer-outline'
+            }
+        ];
+
+        // Insurance Status
+        if (vehicle.insuranceExpiry) {
+            const expiry = new Date(vehicle.insuranceExpiry);
+            const today = new Date();
+            const diffDays = Math.ceil((expiry.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+
+            let insuranceStatus = 'Good';
+            let insuranceColor = '#4ade80';
+
+            if (diffDays < 0) {
+                insuranceStatus = 'Expired';
+                insuranceColor = '#f87171';
+            } else if (diffDays < 30) {
+                insuranceStatus = 'Renew Soon';
+                insuranceColor = '#fbbf24';
+            }
+
+            items.push({
+                label: 'Insurance',
+                status: insuranceStatus,
+                color: insuranceColor,
+                icon: 'shield-checkmark-outline'
+            });
+        }
+
+        // Other generic health items based on mileage
+        items.push({
+            label: 'Engine',
+            status: mileage < 30000 ? 'Good' : 'Service Due',
+            color: mileage < 30000 ? '#4ade80' : '#fbbf24',
+            icon: 'cog-outline'
+        });
+
+        items.push({
+            label: 'Fluids',
+            status: mileage < 30000 ? 'Excellent' : 'Check',
+            color: mileage < 30000 ? '#4ade80' : '#fbbf24',
+            icon: 'water-outline'
+        });
+
+        return items;
+    };
+
+    const healthItems = getHealthItems();
+    const overallHealthStatus = healthItems.every(i => i.status === 'Good' || i.status === 'Excellent') ? 'Overall Good' : 'Check Required';
+    const overallHealthColor = overallHealthStatus === 'Overall Good' ? '#10b981' : '#fbbf24';
+
+    // --- Dynamic Reminders Logic ---
+    const lastService = vehicleExpenses
+        .filter(e => e.type === 'Service')
+        .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())[0];
+
+    // Simple logic: Service every 10,000 km.
+    // If no service, first service at 5,000 km.
+    const lastServiceMileage = lastService ? currentMileage : 0; // In a real app, service expense would store mileage
+    const nextServiceKm = lastService ? (lastServiceMileage + 10000) : 5000;
+    const kmRemaining = nextServiceKm - currentMileage;
+
+    const insuranceDateStr = formatDateHeader(vehicle.insuranceExpiry);
+
+    // --- Ownership Summary Logic ---
+    const totalTripsCount = vehicle.totalTrips || 0;
+    const totalRefuelsCount = vehicle.totalRefuels || 0;
 
     return (
         <View style={styles.container}>
             <StatusBar style="light" translucent backgroundColor="transparent" />
+            <View style={{ position: 'absolute', top: Math.max(insets.top, 10), left: 20, right: 20, flexDirection: 'row', justifyContent: 'space-between', zIndex: 100 }}>
+                <TouchableOpacity
+                    style={styles.headerBtnCircle}
+                    onPress={() => navigation.goBack()}
+                    activeOpacity={0.7}
+                >
+                    <Ionicons name="chevron-back" size={24} color={COLORS.text} />
+                </TouchableOpacity>
+
+              <TouchableOpacity
+    style={styles.headerBtnCircle}
+    onPress={() => navigation.navigate('AddVehicle', { vehicle })}
+    activeOpacity={0.7}
+>
+    <MaterialIcons name="edit" size={24} color={COLORS.text} />
+</TouchableOpacity>
+
+
+            </View>
+
             <ScrollView
                 showsVerticalScrollIndicator={false}
                 contentInsetAdjustmentBehavior="never"
@@ -191,18 +301,6 @@ export default function VehicleDetailsScreen({ navigation, route }: { navigation
                             <Ionicons name="car" size={100} color={COLORS.border} />
                         </View>
                     )}
-                    <TouchableOpacity
-                        style={[styles.backBtn, { top: insets.top || 40 }]}
-                        onPress={() => navigation.goBack()}
-                    >
-                        <Ionicons name="chevron-back" size={24} color={COLORS.text} />
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                        style={[styles.moreBtn, { top: insets.top || 40 }]}
-                        onPress={() => setOptionsVisible(true)}
-                    >
-                        <Ionicons name="ellipsis-vertical" size={24} color={COLORS.text} />
-                    </TouchableOpacity>
                 </View>
 
                 <View style={styles.content}>
@@ -253,15 +351,15 @@ export default function VehicleDetailsScreen({ navigation, route }: { navigation
                             <View style={styles.econGrid}>
                                 <View style={styles.econItem}>
                                     <Text style={styles.econSubLabel} numberOfLines={1}>Fuel Spent</Text>
-                                    <Text style={styles.econSubValue} numberOfLines={1}>₹{totalFuelAmount.toLocaleString('en-IN')}</Text>
+                                    <Text style={styles.econSubValue} numberOfLines={1}>₹{fuelSpent.toLocaleString('en-IN')}</Text>
                                 </View>
                                 <View style={[styles.econItem, { marginHorizontal: 10 }]}>
                                     <Text style={styles.econSubLabel} numberOfLines={1}>Maintenance</Text>
-                                    <Text style={styles.econSubValue} numberOfLines={1}>₹{totalExpenseAmount.toLocaleString('en-IN')}</Text>
+                                    <Text style={styles.econSubValue} numberOfLines={1}>₹{maintenanceCost.toLocaleString('en-IN')}</Text>
                                 </View>
                                 <View style={styles.econItem}>
                                     <Text style={styles.econSubLabel} numberOfLines={1}>Daily Cost</Text>
-                                    <Text style={styles.econSubValue} numberOfLines={1}>₹{(totalOwnershipCost / 365).toFixed(0)}</Text>
+                                    <Text style={styles.econSubValue} numberOfLines={1}>₹{dailyCost}</Text>
                                 </View>
                             </View>
                         </LinearGradient>
@@ -271,9 +369,9 @@ export default function VehicleDetailsScreen({ navigation, route }: { navigation
                     <View style={styles.section}>
                         <View style={styles.sectionHeaderRow}>
                             <Text style={styles.sectionTitle}>Vehicle Health</Text>
-                            <View style={styles.healthStatusBadge}>
-                                <View style={styles.statusDot} />
-                                <Text style={styles.healthTotalStatus}>Overall Good</Text>
+                            <View style={[styles.healthStatusBadge, { backgroundColor: `${overallHealthColor}15` }]}>
+                                <View style={[styles.statusDot, { backgroundColor: overallHealthColor }]} />
+                                <Text style={[styles.healthTotalStatus, { color: overallHealthColor }]}>{overallHealthStatus}</Text>
                             </View>
                         </View>
                         <View style={styles.healthGrid}>
@@ -312,7 +410,16 @@ export default function VehicleDetailsScreen({ navigation, route }: { navigation
                                 </View>
                                 <View style={styles.specText}>
                                     <Text style={styles.specLabel}>Transmission</Text>
-                                    <Text style={styles.specValue}>{vehicle.transmission || 'N/A'}</Text>
+                                    <Text style={styles.specValue}>{vehicle.transmission?.toLowerCase() === 'automatic' ? 'Automatic' : 'Manual'}</Text>
+                                </View>
+                            </View>
+                            <View style={styles.specItem}>
+                                <View style={styles.specIcon}>
+                                    <Ionicons name="calendar-outline" size={20} color={COLORS.primary} />
+                                </View>
+                                <View style={styles.specText}>
+                                    <Text style={styles.specLabel}>Purchase Date</Text>
+                                    <Text style={styles.specValue}>{formatDateHeader(vehicle.purchaseDate)}</Text>
                                 </View>
                             </View>
                             <View style={styles.specItem}>
@@ -337,7 +444,9 @@ export default function VehicleDetailsScreen({ navigation, route }: { navigation
                             </View>
                             <View style={styles.reminderInfo}>
                                 <Text style={styles.reminderTitle}>General Service</Text>
-                                <Text style={styles.reminderSub}>Due in 2,850 km</Text>
+                                <Text style={styles.reminderSub}>
+                                    {kmRemaining > 0 ? `Due in ${kmRemaining.toLocaleString()} km` : `Overdue by ${Math.abs(kmRemaining).toLocaleString()} km`}
+                                </Text>
                             </View>
                             <TouchableOpacity
                                 style={styles.bookBtn}
@@ -353,7 +462,7 @@ export default function VehicleDetailsScreen({ navigation, route }: { navigation
                             </View>
                             <View style={styles.reminderInfo}>
                                 <Text style={styles.reminderTitle}>Insurance Renewal</Text>
-                                <Text style={styles.reminderSub}>Expires 14 Aug 2025</Text>
+                                <Text style={styles.reminderSub}>Expires {insuranceDateStr}</Text>
                             </View>
                             <TouchableOpacity
                                 style={styles.viewDocBtn}
@@ -377,11 +486,11 @@ export default function VehicleDetailsScreen({ navigation, route }: { navigation
                         <View style={styles.ownershipGrid}>
                             <View style={styles.ownershipCard}>
                                 <Text style={styles.ownershipLabel}>Total Trips</Text>
-                                <Text style={styles.ownershipValue}>124</Text>
+                                <Text style={styles.ownershipValue}>{totalTripsCount}</Text>
                             </View>
                             <View style={styles.ownershipCard}>
                                 <Text style={styles.ownershipLabel}>Refuels</Text>
-                                <Text style={styles.ownershipValue}>32</Text>
+                                <Text style={styles.ownershipValue}>{totalRefuelsCount}</Text>
                             </View>
                         </View>
                     </View>
@@ -494,6 +603,15 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
         alignItems: 'center',
         backgroundColor: COLORS.extraLightGray,
+    },
+    headerBtnCircle: {
+        width: 40,
+        height: 40,
+        borderRadius: 20,
+        backgroundColor: COLORS.white,
+        justifyContent: 'center',
+        alignItems: 'center',
+        ...SHADOWS.light,
     },
     backBtn: {
         position: 'absolute',

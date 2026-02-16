@@ -26,9 +26,9 @@ export default function LoanCalculatorScreen({ navigation, route }: { navigation
 
     // Robust Calculation Logic
     const calculation = useMemo(() => {
-        const P = parseFloat(loanAmount) || 0;
-        const annualRate = parseFloat(interestRate) || 0;
-        const years = parseFloat(tenure) || 0;
+        const P = parseFloat(loanAmount.replace(/,/g, '')) || 0;
+        const annualRate = parseFloat(interestRate.replace(/,/g, '')) || 0;
+        const years = parseFloat(tenure.replace(/,/g, '')) || 0;
         const n = years * 12;
 
         if (P === 0 || n === 0) {

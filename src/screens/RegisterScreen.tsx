@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
     View,
     Text,
@@ -9,27 +9,63 @@ import {
     Platform,
     ScrollView,
     Alert,
+    ToastAndroid,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { COLORS } from '../constants/theme';
-import { useAuth } from '../context/AuthContext';
 import { StackNavigationProp } from '@react-navigation/stack';
+import apiClient from '../api/apiClient';
 
 type RegisterScreenProps = {
     navigation: StackNavigationProp<any>;
 };
+
+interface Role {
+    id: number;
+    name: string;
+    activeStatus: boolean;
+    createdAt: string;
+    updatedAt: string;
+}
+
+// API Endpoints
+
 
 export default function RegisterScreen({ navigation }: RegisterScreenProps) {
     const [name, setName] = useState('');
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [confirmPassword, setConfirmPassword] = useState('');
+    const [selectedRole, setSelectedRole] = useState<Role | null>(null);
+    const [roles, setRoles] = useState<Role[]>([]);
     const [errors, setErrors] = useState<{ name?: string; email?: string; password?: string; confirmPassword?: string }>({});
     const [showPassword, setShowPassword] = useState(false);
     const [showConfirmPassword, setShowConfirmPassword] = useState(false);
     const [isLoading, setIsLoading] = useState(false);
-    const { register } = useAuth();
+
+    // Fetch roles on component mount
+    useEffect(() => {
+        fetchRoles();
+    }, []);
+
+    const fetchRoles = async () => {
+        try {
+            const response = await apiClient.get("roles");
+
+            if (response.data && Array.isArray(response.data)) {
+                setRoles(response.data);
+                // Auto-select "User" role if available (case-insensitive)
+                const userRole = response.data.find((role: Role) => role.name.toLowerCase() === 'user');
+                if (userRole) {
+                    setSelectedRole(userRole);
+                }
+            }
+        } catch (error) {
+            console.error('Error fetching roles:', error);
+            Alert.alert('Error', 'Failed to load roles. Please try again later.');
+        }
+    };
 
     const validate = () => {
         let valid = true;
@@ -64,6 +100,8 @@ export default function RegisterScreen({ navigation }: RegisterScreenProps) {
             valid = false;
         }
 
+
+
         setErrors(newErrors);
         return valid;
     };
@@ -74,14 +112,58 @@ export default function RegisterScreen({ navigation }: RegisterScreenProps) {
         }
 
         setIsLoading(true);
-        const success = await register(name.trim(), email.trim(), password);
-        setIsLoading(false);
 
-        if (!success) {
-            Alert.alert('Registration Failed', 'Email already exists. Please use a different email.');
-        } else {
-            // If success, user will be auto-logged in by AuthContext, so navigate to MainTabs
-            navigation.reset({ index: 0, routes: [{ name: 'MainTabs' }] });
+
+        try {
+            const userRole = selectedRole || roles.find(r => r.name.toLowerCase() === 'user');
+
+            if (!userRole) {
+                Alert.alert('Error', 'System is initializing. Please try again in a moment.');
+                setIsLoading(false);
+                return;
+            }
+
+            // Prepare the request payload according to backend API structure
+            const registrationData = {
+                id: 0,
+                username: name.trim(),
+                email: email.trim(),
+                password: password,
+                activeStatus: true,
+                roleId: userRole.id
+            };
+
+            const response = await apiClient.post("users", registrationData);
+
+            // Axios returns data directly in response.data
+            if (response.status >= 200 && response.status < 300) {
+                // Registration successful
+                if (Platform.OS === 'android') {
+                    ToastAndroid.show('Account created successfully! Please login.', ToastAndroid.LONG);
+                    navigation.navigate('Login');
+                } else {
+                    Alert.alert(
+                        'Success',
+                        'Account created successfully! Please login.',
+                        [
+                            {
+                                text: 'OK',
+                                onPress: () => navigation.navigate('Login')
+                            }
+                        ]
+                    );
+                }
+            } else {
+                // Handle error response from backend
+                const errorMessage = response.data?.message || 'Registration failed. Please try again.';
+                Alert.alert('Registration Failed', errorMessage);
+            }
+        } catch (error: any) {
+            console.error('Registration error:', error);
+            const errorMessage = error.response?.data?.message || 'Network error. Please check your connection and try again.';
+            Alert.alert('Error', errorMessage);
+        } finally {
+            setIsLoading(false);
         }
     };
 
@@ -208,6 +290,8 @@ export default function RegisterScreen({ navigation }: RegisterScreenProps) {
                             </View>
                             {errors.confirmPassword ? <Text style={styles.errorText}>{errors.confirmPassword}</Text> : null}
                         </View>
+
+
 
                         {/* Register Button */}
                         <TouchableOpacity
@@ -361,5 +445,8 @@ const styles = StyleSheet.create({
         fontSize: 12,
         marginLeft: 4,
         marginTop: 4,
+    },
+    placeholderText: {
+        color: 'rgba(255,255,255,0.5)',
     },
 });

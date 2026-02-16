@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import {
     View,
     Text,
@@ -7,24 +7,96 @@ import {
     TouchableOpacity,
     Platform,
     Modal,
+    ActivityIndicator,
+    Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
+import { useFocusEffect } from '@react-navigation/native';
 import { useApp, Expense } from '../context/AppContext';
 import { COLORS, SIZES, SHADOWS } from '../constants/theme';
+import apiClient from '../api/apiClient';
 
 type TimeFilter = 'All' | 'Week' | 'Month' | 'Year';
 
+interface ServiceRecord {
+    id: number;
+    vehicleId: number;
+    serviceTitle: string;
+    odometer: number;
+    serviceCenter: string;
+    amount: number;
+    date: string;
+    note: string;
+}
+
 export default function ServiceRecordsScreen({ navigation, route }: { navigation: any, route: any }) {
-    const { vehicles, expenses } = useApp();
+    const { vehicles } = useApp();
     const vehicleId = route.params?.vehicleId;
     const vehicle = vehicles.find(v => v.id === vehicleId) || vehicles[0];
 
     const [activeFilter, setActiveFilter] = useState<TimeFilter>('All');
-    const [selectedRecord, setSelectedRecord] = useState<Expense | null>(null);
+    const [selectedRecord, setSelectedRecord] = useState<ServiceRecord | null>(null);
     const [isModalVisible, setModalVisible] = useState(false);
+    const [serviceRecords, setServiceRecords] = useState<ServiceRecord[]>([]);
+    const [isLoading, setIsLoading] = useState(true);
 
-    const filterRecords = (records: Expense[], filter: TimeFilter) => {
+    const fetchServiceRecords = async () => {
+        if (!vehicle?.id) return;
+
+        setIsLoading(true);
+        try {
+            const response = await apiClient.get(`/services?vehicleId=${vehicle.id}`);
+            if (response.status === 200 && response.data) {
+                setServiceRecords(response.data);
+            }
+        } catch (error) {
+            console.error('Error fetching service records:', error);
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
+    // Fetch service records when screen is focused
+    useFocusEffect(
+        useCallback(() => {
+            fetchServiceRecords();
+        }, [vehicle?.id])
+    );
+
+    const handleDelete = async (id: number) => {
+        Alert.alert(
+            'Delete Record',
+            'Are you sure you want to delete this service record?',
+            [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                    text: 'Delete',
+                    style: 'destructive',
+                    onPress: async () => {
+                        try {
+                            const response = await apiClient.delete(`/services/${id}`);
+                            if (response.status === 200 || response.status === 204) {
+                                setModalVisible(false);
+                                fetchServiceRecords(); // Refresh list
+                            }
+                        } catch (error) {
+                            console.error('Error deleting service record:', error);
+                            Alert.alert('Error', 'Failed to delete the record.');
+                        }
+                    }
+                }
+            ]
+        );
+    };
+
+    const handleEdit = (record: ServiceRecord) => {
+        setModalVisible(false);
+        navigation.navigate('AddService', { service: record });
+    };
+
+
+    const filterRecords = (records: ServiceRecord[], filter: TimeFilter) => {
         if (filter === 'All') return records;
 
         const now = new Date();
@@ -41,12 +113,10 @@ export default function ServiceRecordsScreen({ navigation, route }: { navigation
         return records.filter(r => new Date(r.date) >= startOfPeriod);
     };
 
-    // Filter service expenses for this vehicle
+    // Use API data instead of local context
     const allServiceRecords = useMemo(() => {
-        return expenses
-            .filter(e => e.vehicleId === vehicle?.id && (e.type === 'Service' || e.type === 'Repair' || e.type === 'Parts'))
-            .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-    }, [expenses, vehicle?.id]);
+        return serviceRecords.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    }, [serviceRecords]);
 
     const filteredRecords = useMemo(() => {
         return filterRecords(allServiceRecords, activeFilter);
@@ -63,7 +133,7 @@ export default function ServiceRecordsScreen({ navigation, route }: { navigation
         });
     };
 
-    const handleRecordPress = (record: Expense) => {
+    const handleRecordPress = (record: ServiceRecord) => {
         setSelectedRecord(record);
         setModalVisible(true);
     };
@@ -75,25 +145,12 @@ export default function ServiceRecordsScreen({ navigation, route }: { navigation
             <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
 
                 {/* Summary Header Card */}
-                <LinearGradient
-                    colors={[COLORS.primary, '#4f46e5']}
-                    style={styles.headerCard}
-                    start={{ x: 0, y: 0 }}
-                    end={{ x: 1, y: 1 }}
-                >
-                    <View>
-                        <Text style={styles.headerLabel}>{activeFilter === 'All' ? 'Total' : `This ${activeFilter}`} Maintenance</Text>
-                        <Text style={styles.headerValue}>₹{totalServiceCost.toLocaleString('en-IN')}</Text>
-                    </View>
-                    <View style={styles.headerIconBg}>
-                        <Ionicons name="build" size={32} color={COLORS.white} />
-                    </View>
-                </LinearGradient>
 
-                <View style={styles.vehicleInfo}>
+
+                {/* <View style={styles.vehicleInfo}>
                     <Ionicons name="car-outline" size={20} color={COLORS.textLight} />
                     <Text style={styles.vehicleText}>{vehicle?.brand} {vehicle?.model} • {vehicle?.registration}</Text>
-                </View>
+                </View> */}
 
                 {/* Filter Bar */}
                 <View style={styles.filterWrapper}>
@@ -112,6 +169,21 @@ export default function ServiceRecordsScreen({ navigation, route }: { navigation
                     </ScrollView>
                 </View>
 
+                <LinearGradient
+                    colors={[COLORS.primary, '#4f46e5']}
+                    style={styles.headerCard}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 1 }}
+                >
+                    <View>
+                        <Text style={styles.headerLabel}>{activeFilter === 'All' ? 'Total' : `This ${activeFilter}`} Maintenance</Text>
+                        <Text style={styles.headerValue}>₹{totalServiceCost.toLocaleString('en-IN')}</Text>
+                    </View>
+                    <View style={styles.headerIconBg}>
+                        <Ionicons name="build" size={32} color={COLORS.white} />
+                    </View>
+                </LinearGradient>
+
                 <View style={styles.sectionHeader}>
                     <Text style={styles.sectionTitle}>History Log</Text>
                     <View style={styles.badge}>
@@ -119,7 +191,12 @@ export default function ServiceRecordsScreen({ navigation, route }: { navigation
                     </View>
                 </View>
 
-                {filteredRecords.length === 0 ? (
+                {isLoading ? (
+                    <View style={styles.emptyContainer}>
+                        <ActivityIndicator size="large" color={COLORS.primary} />
+                        <Text style={styles.emptySubtitle}>Loading service records...</Text>
+                    </View>
+                ) : filteredRecords.length === 0 ? (
                     <View style={styles.emptyContainer}>
                         <Ionicons name="clipboard-outline" size={60} color={COLORS.border} />
                         <Text style={styles.emptyTitle}>No Records Found</Text>
@@ -141,15 +218,23 @@ export default function ServiceRecordsScreen({ navigation, route }: { navigation
 
                             <View style={styles.recordMain}>
                                 <View style={styles.recordHeader}>
-                                    <Text style={styles.recordTitle} numberOfLines={1}>{record.note?.split(' @ ')[0] || `Maintenance Activity`}</Text>
+                                    <Text style={styles.recordTitle} numberOfLines={1}>{record.serviceTitle || 'Maintenance Activity'}</Text>
                                     <Text style={styles.recordAmount}>₹{record.amount.toLocaleString('en-IN')}</Text>
                                 </View>
                                 <View style={styles.recordFooter}>
-                                    <View style={styles.typeBadge}>
-                                        <Text style={styles.typeText}>{record.type}</Text>
-                                    </View>
-                                    <View style={styles.dot} />
-                                    <Text style={styles.recordFooterText}>{formatDate(record.date)}</Text>
+                                    <Text style={styles.recordDateText}>{formatDate(record.date)}</Text>
+                                    {record.serviceCenter && (
+                                        <View style={styles.providerContainer}>
+                                            <View style={styles.dot} />
+                                            <Text
+                                                style={styles.recordFooterText}
+                                                numberOfLines={1}
+                                                ellipsizeMode="tail"
+                                            >
+                                                {record.serviceCenter}
+                                            </Text>
+                                        </View>
+                                    )}
                                 </View>
                             </View>
 
@@ -177,17 +262,38 @@ export default function ServiceRecordsScreen({ navigation, route }: { navigation
                         <View style={styles.dragHandle} />
                         <View style={styles.modalHeader}>
                             <Text style={styles.modalTitle}>Service Details</Text>
-                            <TouchableOpacity onPress={() => setModalVisible(false)} style={styles.closeBtn}>
-                                <Ionicons name="close" size={24} color={COLORS.text} />
-                            </TouchableOpacity>
+                            <View style={styles.headerActions}>
+                                <TouchableOpacity
+                                    style={styles.actionHeaderBtn}
+                                    onPress={() => selectedRecord && handleEdit(selectedRecord)}
+                                >
+                                    <Ionicons name="create-outline" size={20} color={COLORS.primary} />
+                                </TouchableOpacity>
+                                <TouchableOpacity
+                                    style={styles.actionHeaderBtn}
+                                    onPress={() => selectedRecord && handleDelete(selectedRecord.id)}
+                                >
+                                    <Ionicons name="trash-outline" size={20} color={COLORS.danger} />
+                                </TouchableOpacity>
+                                <TouchableOpacity onPress={() => setModalVisible(false)} style={styles.closeBtn}>
+                                    <Ionicons name="close" size={24} color={COLORS.text} />
+                                </TouchableOpacity>
+                            </View>
                         </View>
 
                         {selectedRecord && (
                             <View style={styles.detailsList}>
                                 <View style={styles.detailItem}>
-                                    <Text style={styles.detailLabel}>Work Description</Text>
-                                    <Text style={styles.detailValueBold}>{selectedRecord.note || 'Regular Maintenance'}</Text>
+                                    <Text style={styles.detailLabel}>Service Title</Text>
+                                    <Text style={styles.detailValueBold}>{selectedRecord.serviceTitle || 'Regular Maintenance'}</Text>
                                 </View>
+
+                                {selectedRecord.note && (
+                                    <View style={styles.detailItem}>
+                                        <Text style={styles.detailLabel}>Notes</Text>
+                                        <Text style={styles.detailValue}>{selectedRecord.note}</Text>
+                                    </View>
+                                )}
 
                                 <View style={styles.detailRow}>
                                     <View style={styles.detailItemHalf}>
@@ -200,10 +306,14 @@ export default function ServiceRecordsScreen({ navigation, route }: { navigation
                                     </View>
                                 </View>
 
-                                <View style={styles.detailItem}>
-                                    <Text style={styles.detailLabel}>Service Type</Text>
-                                    <View style={[styles.typeBadge, { alignSelf: 'flex-start', marginTop: 4 }]}>
-                                        <Text style={styles.typeText}>{selectedRecord.type}</Text>
+                                <View style={styles.detailRow}>
+                                    <View style={styles.detailItemHalf}>
+                                        <Text style={styles.detailLabel}>Service Center</Text>
+                                        <Text style={styles.detailValue}>{selectedRecord.serviceCenter || 'N/A'}</Text>
+                                    </View>
+                                    <View style={styles.detailItemHalf}>
+                                        <Text style={styles.detailLabel}>Odometer</Text>
+                                        <Text style={styles.detailValue}>{selectedRecord.odometer} km</Text>
                                     </View>
                                 </View>
                             </View>
@@ -414,6 +524,17 @@ const styles = StyleSheet.create({
     recordFooterText: {
         fontSize: 12,
         color: COLORS.textExtraLight,
+        flexShrink: 1, // Allow truncation
+    },
+    recordDateText: {
+        fontSize: 12,
+        color: COLORS.textExtraLight,
+    },
+    providerContainer: {
+        flex: 1,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
     },
     emptyContainer: {
         alignItems: 'center',
@@ -508,6 +629,16 @@ const styles = StyleSheet.create({
         fontSize: 14,
         fontWeight: '600',
         color: COLORS.text,
+    },
+    headerActions: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 12,
+    },
+    actionHeaderBtn: {
+        padding: 6,
+        backgroundColor: '#f8fafc',
+        borderRadius: 8,
     },
     fab: {
         position: 'absolute',

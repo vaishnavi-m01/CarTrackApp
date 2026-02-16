@@ -12,7 +12,8 @@ import {
     Animated,
     Dimensions,
     Alert,
-    ScrollView
+    ScrollView,
+    KeyboardAvoidingView,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
@@ -327,107 +328,112 @@ export default function AddStoryScreen({ navigation }: AddStoryScreenProps) {
 
                     {/* Full Screen Caption Input Overlay */}
                     {isAddingCaption && (
-                        <View style={styles.captionOverlay}>
-                            {/* Done Button Top Right */}
-                            <TouchableOpacity
-                                style={{ position: 'absolute', right: 20, top: 40, zIndex: 60 }}
-                                onPress={() => setIsAddingCaption(false)}
-                            >
-                                <Text style={{ color: COLORS.white, fontWeight: 'bold', fontSize: 18 }}>Done</Text>
-                            </TouchableOpacity>
-                            {/* Caption Input */}
-                            <TextInput
-                                style={[
-                                    styles.captionInput,
-                                    {
-                                        fontSize: fontSize,
-                                        color: textColor,
-                                        fontFamily: FONT_FAMILIES.find(f => f.name === fontFamily)?.fontFamily || 'System',
-                                        fontWeight: (FONT_FAMILIES.find(f => f.name === fontFamily)?.fontWeight as any) || 'normal',
-                                        fontStyle: (FONT_FAMILIES.find(f => f.name === fontFamily)?.fontStyle as any) || 'normal',
-                                    }
-                                ]}
-                                placeholder="Type something..."
-                                placeholderTextColor="rgba(255,255,255,0.5)"
-                                value={caption}
-                                onChangeText={setCaption}
-                                multiline
-                                autoFocus
-                                blurOnSubmit={false}
-                            />
-
-                            {/* Bottom Customization Controls */}
-                            <View style={styles.editBottomControls}>
-                                {/* Color Picker */}
-                                <ScrollView
-                                    horizontal
-                                    showsHorizontalScrollIndicator={false}
-                                    style={styles.colorPickerScroll}
-                                    contentContainerStyle={{ gap: 12, paddingHorizontal: 20 }}
-                                >
-                                    {COLOR_PALETTE.map((color) => (
-                                        <TouchableOpacity
-                                            key={color}
-                                            onPress={() => setTextColor(color)}
-                                            style={[
-                                                styles.colorCircle,
-                                                { backgroundColor: color },
-                                                textColor === color && { borderColor: COLORS.white, borderWidth: 3 }
-                                            ]}
-                                        />
-                                    ))}
-                                </ScrollView>
-
-                                {/* Font Family Picker */}
-                                <ScrollView
-                                    horizontal
-                                    showsHorizontalScrollIndicator={false}
-                                    style={styles.fontPickerScroll}
-                                    contentContainerStyle={{ gap: 10, paddingHorizontal: 20 }}
-                                >
-                                    {FONT_FAMILIES.map((font) => (
-                                        <TouchableOpacity
-                                            key={font.name}
-                                            onPress={() => setFontFamily(font.name)}
-                                            style={[
-                                                styles.fontTab,
-                                                fontFamily === font.name && { backgroundColor: COLORS.white }
-                                            ]}
-                                        >
-                                            <Text style={[
-                                                styles.fontTabText,
-                                                {
-                                                    fontFamily: font.fontFamily,
-                                                    fontWeight: font.fontWeight as any,
-                                                    fontStyle: font.fontStyle as any,
-                                                    color: fontFamily === font.name ? COLORS.black : COLORS.white
-                                                }
-                                            ]}>
-                                                {font.name}
-                                            </Text>
-                                        </TouchableOpacity>
-                                    ))}
-                                </ScrollView>
-                            </View>
-
-                            {/* Font Size Slider / Control */}
-                            <View style={styles.fontSizeControl}>
+                        <KeyboardAvoidingView
+                            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+                            style={styles.captionOverlay}
+                        >
+                            <View style={{ flex: 1, width: '100%', justifyContent: 'center', alignItems: 'center' }}>
+                                {/* Done Button Top Right */}
                                 <TouchableOpacity
-                                    onPress={() => setFontSize(Math.min(fontSize + 2, 80))}
-                                    style={styles.sizeBtn}
+                                    style={{ position: 'absolute', right: 20, top: 40, zIndex: 60 }}
+                                    onPress={() => setIsAddingCaption(false)}
                                 >
-                                    <Ionicons name="add" size={24} color={COLORS.white} />
+                                    <Text style={{ color: COLORS.white, fontWeight: 'bold', fontSize: 18 }}>Done</Text>
                                 </TouchableOpacity>
-                                <View style={styles.sizeDivider} />
-                                <TouchableOpacity
-                                    onPress={() => setFontSize(Math.max(fontSize - 2, 10))}
-                                    style={styles.sizeBtn}
-                                >
-                                    <Ionicons name="remove" size={24} color={COLORS.white} />
-                                </TouchableOpacity>
-                                <Text style={styles.sizeLabel}>Size</Text>
+                                {/* Caption Input */}
+                                <TextInput
+                                    style={[
+                                        styles.captionInput,
+                                        {
+                                            fontSize: fontSize,
+                                            color: textColor,
+                                            fontFamily: FONT_FAMILIES.find(f => f.name === fontFamily)?.fontFamily || 'System',
+                                            fontWeight: (FONT_FAMILIES.find(f => f.name === fontFamily)?.fontWeight as any) || 'normal',
+                                            fontStyle: (FONT_FAMILIES.find(f => f.name === fontFamily)?.fontStyle as any) || 'normal',
+                                        }
+                                    ]}
+                                    placeholder="Type something..."
+                                    placeholderTextColor="rgba(255,255,255,0.5)"
+                                    value={caption}
+                                    onChangeText={setCaption}
+                                    multiline
+                                    autoFocus
+                                    blurOnSubmit={false}
+                                />
+
+                                {/* Bottom Customization Controls */}
+                                <View style={styles.editBottomControls}>
+                                    {/* Color Picker */}
+                                    <ScrollView
+                                        horizontal
+                                        showsHorizontalScrollIndicator={false}
+                                        style={styles.colorPickerScroll}
+                                        contentContainerStyle={{ gap: 12, paddingHorizontal: 20 }}
+                                    >
+                                        {COLOR_PALETTE.map((color) => (
+                                            <TouchableOpacity
+                                                key={color}
+                                                onPress={() => setTextColor(color)}
+                                                style={[
+                                                    styles.colorCircle,
+                                                    { backgroundColor: color },
+                                                    textColor === color && { borderColor: COLORS.white, borderWidth: 3 }
+                                                ]}
+                                            />
+                                        ))}
+                                    </ScrollView>
+
+                                    {/* Font Family Picker */}
+                                    <ScrollView
+                                        horizontal
+                                        showsHorizontalScrollIndicator={false}
+                                        style={styles.fontPickerScroll}
+                                        contentContainerStyle={{ gap: 10, paddingHorizontal: 20 }}
+                                    >
+                                        {FONT_FAMILIES.map((font) => (
+                                            <TouchableOpacity
+                                                key={font.name}
+                                                onPress={() => setFontFamily(font.name)}
+                                                style={[
+                                                    styles.fontTab,
+                                                    fontFamily === font.name && { backgroundColor: COLORS.white }
+                                                ]}
+                                            >
+                                                <Text style={[
+                                                    styles.fontTabText,
+                                                    {
+                                                        fontFamily: font.fontFamily,
+                                                        fontWeight: font.fontWeight as any,
+                                                        fontStyle: font.fontStyle as any,
+                                                        color: fontFamily === font.name ? COLORS.black : COLORS.white
+                                                    }
+                                                ]}>
+                                                    {font.name}
+                                                </Text>
+                                            </TouchableOpacity>
+                                        ))}
+                                    </ScrollView>
+                                </View>
+
+                                {/* Font Size Slider / Control */}
+                                <View style={styles.fontSizeControl}>
+                                    <TouchableOpacity
+                                        onPress={() => setFontSize(Math.min(fontSize + 2, 80))}
+                                        style={styles.sizeBtn}
+                                    >
+                                        <Ionicons name="add" size={24} color={COLORS.white} />
+                                    </TouchableOpacity>
+                                    <View style={styles.sizeDivider} />
+                                    <TouchableOpacity
+                                        onPress={() => setFontSize(Math.max(fontSize - 2, 10))}
+                                        style={styles.sizeBtn}
+                                    >
+                                        <Ionicons name="remove" size={24} color={COLORS.white} />
+                                    </TouchableOpacity>
+                                    <Text style={styles.sizeLabel}>Size</Text>
+                                </View>
                             </View>
-                        </View>
+                        </KeyboardAvoidingView>
                     )}
                 </View>
             ) : (

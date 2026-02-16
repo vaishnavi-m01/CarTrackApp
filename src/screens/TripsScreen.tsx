@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useCallback } from 'react';
 import {
     View,
     Text,
@@ -6,18 +6,67 @@ import {
     ScrollView,
     TouchableOpacity,
     Platform,
+    ActivityIndicator,
+    Alert,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
+import { useFocusEffect } from '@react-navigation/native';
 import { useApp } from '../context/AppContext';
 import { COLORS, SIZES, SHADOWS } from '../constants/theme';
+import apiClient from '../api/apiClient';
 
 export default function TripsScreen({ navigation, route }: { navigation: any, route: any }) {
-    const { trips, vehicles } = useApp();
+    const { vehicles } = useApp();
     const vehicleId = route.params?.vehicleId;
 
-    // Filter trips for the specific vehicle if provided
-    const filteredTrips = vehicleId ? trips.filter(t => t.vehicleId === vehicleId) : trips;
+    const [trips, setTrips] = useState<any[]>([]);
+    const [isLoading, setIsLoading] = useState(true);
+
+    const fetchTrips = useCallback(async () => {
+        if (!vehicleId) return;
+        setIsLoading(true);
+        try {
+            const response = await apiClient.get(`/trips?vehicleId=${vehicleId}`);
+            if (response.data) {
+                // The API returns trips for the vehicle
+                setTrips(response.data);
+            }
+        } catch (error) {
+            console.error('Error fetching trips:', error);
+            Alert.alert('Error', 'Failed to load trips');
+        } finally {
+            setIsLoading(false);
+        }
+    }, [vehicleId]);
+
+    useFocusEffect(
+        useCallback(() => {
+            fetchTrips();
+        }, [fetchTrips])
+    );
+
+    const handleDeleteTrip = async (id: number) => {
+        Alert.alert(
+            'Delete Trip',
+            'Are you sure you want to delete this trip record?',
+            [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                    text: 'Delete',
+                    style: 'destructive',
+                    onPress: async () => {
+                        try {
+                            await apiClient.delete(`/trips/${id}`);
+                            fetchTrips(); // Refresh
+                        } catch (error) {
+                            Alert.alert('Error', 'Failed to delete trip');
+                        }
+                    }
+                }
+            ]
+        );
+    };
 
     const formatDate = (dateStr: string) => {
         const d = new Date(dateStr);
@@ -53,61 +102,88 @@ export default function TripsScreen({ navigation, route }: { navigation: any, ro
 
                 <Text style={styles.sectionTitle}>Recent Trips</Text>
 
-                {filteredTrips.length === 0 ? (
+                {isLoading ? (
+                    <View style={styles.loadingContainer}>
+                        <ActivityIndicator size="large" color={COLORS.primary} />
+                    </View>
+                ) : trips.length === 0 ? (
                     <View style={styles.emptyContainer}>
                         <Ionicons name="map-outline" size={60} color={COLORS.gray} />
                         <Text style={styles.emptyText}>No trips recorded yet</Text>
                     </View>
                 ) : (
                     <View style={styles.timelineContainer}>
-                        {filteredTrips.map((trip, index) => (
-                            <View key={trip.id} style={styles.tripItem}>
-                                {/* Timeline line */}
-                                <View style={styles.timelineLeft}>
-                                    <View style={[
-                                        styles.timelineDot,
-                                        { backgroundColor: index === 0 ? COLORS.primary : COLORS.gray }
-                                    ]}>
-                                        <Ionicons
-                                            name={index === 0 ? "location" : "ellipse"}
-                                            size={index === 0 ? 14 : 6}
-                                            color={COLORS.white}
-                                        />
-                                    </View>
-                                    {index < filteredTrips.length - 1 && <View style={styles.timelineLine} />}
-                                </View>
+                        {trips.map((trip, index) => {
+                            const vehicle = vehicles.find(v => v.id === trip.vehicleId.toString());
+                            const vehicleName = vehicle ? `${vehicle.brand} ${vehicle.model}` : `Vehicle ${trip.vehicleId}`;
 
-                                {/* Trip Content */}
-                                <View style={styles.tripCard}>
-                                    <View style={styles.tripHeader}>
-                                        <Text style={styles.tripTitle}>{trip.title}</Text>
-                                        <View style={styles.vehicleBadge}>
-                                            <Text style={styles.vehicleBadgeText}>{trip.vehicleName}</Text>
+                            return (
+                                <View key={trip.id} style={styles.tripItem}>
+                                    {/* Timeline line */}
+                                    <View style={styles.timelineLeft}>
+                                        <View style={[
+                                            styles.timelineDot,
+                                            { backgroundColor: index === 0 ? COLORS.primary : COLORS.gray }
+                                        ]}>
+                                            <Ionicons
+                                                name={index === 0 ? "location" : "ellipse"}
+                                                size={index === 0 ? 14 : 6}
+                                                color={COLORS.white}
+                                            />
                                         </View>
+                                        {index < trips.length - 1 && <View style={styles.timelineLine} />}
                                     </View>
 
-                                    <View style={styles.tripStats}>
-                                        <View style={styles.statItem}>
-                                            <Ionicons name="calendar-outline" size={14} color={COLORS.textLight} />
-                                            <Text style={styles.statText}>{formatDate(trip.date)}</Text>
+                                    {/* Trip Content */}
+                                    <View style={styles.tripCard}>
+                                        <View style={styles.tripCardHeader}>
+                                            <View style={styles.tripInfo}>
+                                                <View style={styles.tripHeaderMain}>
+                                                    <Text style={styles.tripTitle}>{trip.title}</Text>
+                                                    <View style={styles.actions}>
+                                                        <TouchableOpacity
+                                                            onPress={() => navigation.navigate('AddTrip', { trip })}
+                                                            style={styles.actionBtn}
+                                                        >
+                                                            <Ionicons name="pencil" size={16} color={COLORS.textLight} />
+                                                        </TouchableOpacity>
+                                                        <TouchableOpacity
+                                                            onPress={() => handleDeleteTrip(trip.id)}
+                                                            style={styles.actionBtn}
+                                                        >
+                                                            <Ionicons name="trash" size={16} color={COLORS.danger} />
+                                                        </TouchableOpacity>
+                                                    </View>
+                                                </View>
+                                                <View style={styles.vehicleBadge}>
+                                                    <Text style={styles.vehicleBadgeText}>{vehicleName}</Text>
+                                                </View>
+                                            </View>
                                         </View>
-                                        <View style={styles.statItem}>
-                                            <Ionicons name="navigate-outline" size={14} color={COLORS.textLight} />
-                                            <Text style={styles.statText}>{trip.distance} km</Text>
+
+                                        <View style={styles.tripStats}>
+                                            <View style={styles.statItem}>
+                                                <Ionicons name="calendar-outline" size={14} color={COLORS.textLight} />
+                                                <Text style={styles.statText}>{formatDate(trip.date)}</Text>
+                                            </View>
+                                            <View style={styles.statItem}>
+                                                <Ionicons name="navigate-outline" size={14} color={COLORS.textLight} />
+                                                <Text style={styles.statText}>{trip.distanceKm} km</Text>
+                                            </View>
+                                            <View style={styles.statItem}>
+                                                <Ionicons name="time-outline" size={14} color={COLORS.textLight} />
+                                                <Text style={styles.statText}>{trip.duration}</Text>
+                                            </View>
                                         </View>
-                                        <View style={styles.statItem}>
-                                            <Ionicons name="time-outline" size={14} color={COLORS.textLight} />
-                                            <Text style={styles.statText}>{trip.duration}</Text>
-                                        </View>
+                                        {trip.note && (
+                                            <Text style={styles.tripNote} numberOfLines={1}>
+                                                "{trip.note}"
+                                            </Text>
+                                        )}
                                     </View>
-                                    {trip.note && (
-                                        <Text style={styles.tripNote} numberOfLines={1}>
-                                            "{trip.note}"
-                                        </Text>
-                                    )}
                                 </View>
-                            </View>
-                        ))}
+                            );
+                        })}
                     </View>
                 )}
             </ScrollView>
@@ -190,6 +266,10 @@ const styles = StyleSheet.create({
         marginTop: 0,
         marginBottom: -25,
     },
+    loadingContainer: {
+        marginTop: 50,
+        alignItems: 'center',
+    },
     tripCard: {
         flex: 1,
         backgroundColor: COLORS.white,
@@ -198,11 +278,24 @@ const styles = StyleSheet.create({
         marginLeft: 15,
         ...SHADOWS.light,
     },
-    tripHeader: {
+    tripCardHeader: {
+        marginBottom: 10,
+    },
+    tripInfo: {
+        gap: 4,
+    },
+    tripHeaderMain: {
         flexDirection: 'row',
         justifyContent: 'space-between',
         alignItems: 'flex-start',
-        marginBottom: 10,
+    },
+    actions: {
+        flexDirection: 'row',
+        gap: 12,
+        alignItems: 'center',
+    },
+    actionBtn: {
+        padding: 2,
     },
     tripTitle: {
         fontSize: 16,

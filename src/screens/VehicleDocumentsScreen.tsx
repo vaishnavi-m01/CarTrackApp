@@ -12,6 +12,7 @@ import {
     SafeAreaView,
     Platform,
     Linking,
+    ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
@@ -22,6 +23,8 @@ import * as FileSystem from 'expo-file-system';
 import { LinearGradient } from 'expo-linear-gradient';
 import { COLORS, SIZES, SHADOWS } from '../constants/theme';
 import { useApp, VehicleDocument, DocumentFile } from '../context/AppContext';
+import { useFocusEffect } from '@react-navigation/native';
+import apiClient from '../api/apiClient';
 
 type DocType = VehicleDocument['type'];
 
@@ -29,65 +32,44 @@ const DOC_TYPES: DocType[] = ['RC', 'Insurance', 'Pollution', 'Service', 'Other'
 
 export default function VehicleDocumentsScreen({ route, navigation }: { route: any; navigation: any }) {
     const { vehicleId } = route.params;
-    const { documents, addDocument, updateDocument, deleteDocument } = useApp();
-    const [isModalVisible, setModalVisible] = useState(false);
+    const [documents, setDocuments] = useState<VehicleDocument[]>([]);
+    const [isLoading, setIsLoading] = useState(true);
     const [isViewModalVisible, setViewModalVisible] = useState(false);
-    const [isEditing, setIsEditing] = useState(false);
     const [selectedDoc, setSelectedDoc] = useState<VehicleDocument | null>(null);
     const [imageViewerVisible, setImageViewerVisible] = useState(false);
     const [currentImageUri, setCurrentImageUri] = useState<string | null>(null);
 
-    // Form state
-    const [type, setType] = useState<DocType>('RC');
-    const [title, setTitle] = useState('');
-    const [files, setFiles] = useState<DocumentFile[]>([]);
-    const [expiryDate, setExpiryDate] = useState('');
-
-    const vehicleDocs = documents.filter(doc => doc.vehicleId === vehicleId);
-
-    const pickImage = async () => {
-        const result = await ImagePicker.launchImageLibraryAsync({
-            mediaTypes: ['images'],
-            allowsMultipleSelection: true,
-            quality: 0.8,
-        });
-
-        if (!result.canceled) {
-            const newFiles: DocumentFile[] = result.assets.map(asset => ({
-                uri: asset.uri,
-                name: asset.fileName || `image_${Date.now()}.jpg`,
-                type: 'image'
-            }));
-            setFiles(prev => [...prev, ...newFiles]);
-        }
-    };
-
-    const pickDocument = async () => {
+    const fetchDocuments = async () => {
         try {
-            const result = await DocumentPicker.getDocumentAsync({
-                type: '*/*',
-                copyToCacheDirectory: true,
-                multiple: true
-            });
-
-            if (!result.canceled) {
-                const newFiles: DocumentFile[] = result.assets.map(asset => {
-                    const isPdf = asset.mimeType === 'application/pdf' || asset.name.toLowerCase().endsWith('.pdf');
-                    return {
-                        uri: asset.uri,
-                        name: asset.name,
-                        type: isPdf ? 'pdf' : 'other'
-                    };
-                });
-                setFiles(prev => [...prev, ...newFiles]);
+            setIsLoading(true);
+            const response = await apiClient.get(`/documents/vehicle/${vehicleId}`);
+            if (response.data) {
+                // Documents now come with files included thanks to previous backend work
+                setDocuments(response.data);
             }
-        } catch (err) {
-            console.error('Error picking document:', err);
+        } catch (error) {
+            console.error('Error fetching documents:', error);
+            Alert.alert('Error', 'Failed to load documents');
+        } finally {
+            setIsLoading(false);
         }
     };
 
-    const removeFile = (index: number) => {
-        setFiles(prev => prev.filter((_, i) => i !== index));
+    useFocusEffect(
+        React.useCallback(() => {
+            fetchDocuments();
+        }, [vehicleId])
+    );
+
+    const deleteDocument = async (id: number) => {
+        try {
+            await apiClient.delete(`/documents/${id}`);
+            Alert.alert('Success', 'Document deleted successfully');
+            fetchDocuments(); // Refresh list
+        } catch (error) {
+            console.error('Error deleting document:', error);
+            Alert.alert('Error', 'Failed to delete document');
+        }
     };
 
     const handleViewFile = async (file: DocumentFile) => {
@@ -151,51 +133,8 @@ export default function VehicleDocumentsScreen({ route, navigation }: { route: a
         }
     };
 
-    const handleAddDocument = () => {
-        if (!title || files.length === 0) {
-            Alert.alert('Error', 'Please provide a title and at least one document file/photo');
-            return;
-        }
-
-        if (isEditing && selectedDoc) {
-            updateDocument(selectedDoc.id, {
-                type,
-                title,
-                files,
-                expiryDate: expiryDate || undefined,
-            });
-        } else {
-            addDocument({
-                vehicleId,
-                type,
-                title,
-                files,
-                expiryDate: expiryDate || undefined,
-                addedDate: new Date().toLocaleDateString(),
-            });
-        }
-
-        resetForm();
-    };
-
     const handleEdit = (doc: VehicleDocument) => {
-        setType(doc.type);
-        setTitle(doc.title);
-        setFiles(doc.files || []);
-        setExpiryDate(doc.expiryDate || '');
-        setSelectedDoc(doc);
-        setIsEditing(true);
-        setModalVisible(true);
-    };
-
-    const resetForm = () => {
-        setTitle('');
-        setFiles([]);
-        setExpiryDate('');
-        setType('RC');
-        setIsEditing(false);
-        setSelectedDoc(null);
-        setModalVisible(false);
+        navigation.navigate('AddDocument', { vehicleId, document: doc });
     };
 
     const confirmDelete = (id: string) => {
@@ -285,20 +224,21 @@ export default function VehicleDocumentsScreen({ route, navigation }: { route: a
         <SafeAreaView style={styles.container}>
             <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
                 <View style={styles.headerSpacer} />
-                {vehicleDocs.length === 0 ? (
+                {isLoading ? (
+                    <ActivityIndicator size="large" color={COLORS.primary} style={{ marginTop: 50 }} />
+                ) : documents.length === 0 ? (
                     <View style={styles.emptyContainer}>
                         <Ionicons name="document-lock-outline" size={80} color={COLORS.border} />
                         <Text style={styles.emptyTitle}>No Documents</Text>
                         <Text style={styles.emptySubtitle}>Upload your vehicle papers for quick access (Images or PDFs).</Text>
                     </View>
                 ) : (
-                    vehicleDocs.map(renderDocumentCard)
+                    documents.map(renderDocumentCard)
                 )}
             </ScrollView>
 
             <TouchableOpacity style={styles.fab} onPress={() => {
-                resetForm();
-                setModalVisible(true);
+                navigation.navigate('AddDocument', { vehicleId });
             }}>
                 <LinearGradient
                     colors={[COLORS.primary, COLORS.primaryDark]}
@@ -402,116 +342,6 @@ export default function VehicleDocumentsScreen({ route, navigation }: { route: a
                                 <View style={{ height: 40 }} />
                             </ScrollView>
                         )}
-                    </View>
-                </TouchableOpacity>
-            </Modal>
-
-            {/* Add/Edit Modal */}
-            <Modal
-                animationType="slide"
-                transparent={true}
-                visible={isModalVisible}
-                onRequestClose={() => setModalVisible(false)}
-            >
-                <TouchableOpacity
-                    style={styles.modalOverlay}
-                    activeOpacity={1}
-                    onPress={() => setModalVisible(false)}
-                >
-                    <View style={styles.modalContent}>
-                        <View style={styles.dragHandle} />
-                        <View style={styles.modalHeader}>
-                            <Text style={styles.modalTitle}>{isEditing ? 'Edit Document' : 'New Document'}</Text>
-                            <TouchableOpacity onPress={() => setModalVisible(false)} style={styles.closeBtn}>
-                                <Ionicons name="close" size={24} color={COLORS.text} />
-                            </TouchableOpacity>
-                        </View>
-
-                        <ScrollView showsVerticalScrollIndicator={false}>
-                            <Text style={styles.inputLabel}>Document Type</Text>
-                            <View style={styles.typeSelector}>
-                                {DOC_TYPES.map(t => (
-                                    <TouchableOpacity
-                                        key={t}
-                                        style={[styles.typeChip, type === t && styles.typeChipActive]}
-                                        onPress={() => setType(t)}
-                                    >
-                                        <Text style={[styles.typeChipText, type === t && styles.typeChipTextActive]}>{t}</Text>
-                                    </TouchableOpacity>
-                                ))}
-                            </View>
-
-                            <Text style={styles.inputLabel}>Document Title</Text>
-                            <TextInput
-                                style={styles.textInput}
-                                placeholder="e.g. Insurance Policy"
-                                value={title}
-                                onChangeText={setTitle}
-                                placeholderTextColor={COLORS.textExtraLight}
-                            />
-
-                            <Text style={styles.inputLabel}>Expiry Date (Optional)</Text>
-                            <TextInput
-                                style={styles.textInput}
-                                placeholder="DD/MM/YYYY"
-                                value={expiryDate}
-                                onChangeText={setExpiryDate}
-                                placeholderTextColor={COLORS.textExtraLight}
-                            />
-
-                            <View style={{ marginTop: 24, marginBottom: 12 }}>
-                                <Text style={[styles.inputLabel, { marginTop: 0, marginBottom: 12 }]}>Attachments ({files.length})</Text>
-                                <View style={{ flexDirection: 'row', gap: 12 }}>
-                                    <TouchableOpacity style={styles.miniPickBtn} onPress={pickImage}>
-                                        <Ionicons name="image-outline" size={18} color={COLORS.primary} />
-                                        <Text style={styles.miniPickText}>Add Photo</Text>
-                                    </TouchableOpacity>
-                                    <TouchableOpacity style={styles.miniPickBtn} onPress={pickDocument}>
-                                        <Ionicons name="document-attach-outline" size={18} color={COLORS.primary} />
-                                        <Text style={styles.miniPickText}>Add File</Text>
-                                    </TouchableOpacity>
-                                </View>
-                            </View>
-
-                            {files.length > 0 ? (
-                                <View style={styles.fileList}>
-                                    {files.map((file, idx) => (
-                                        <View key={idx} style={styles.fileItem}>
-                                            <View style={styles.fileIconBox}>
-                                                <Ionicons
-                                                    name={file.type === 'image' ? 'image' : 'document-text'}
-                                                    size={20}
-                                                    color={file.type === 'image' ? COLORS.primary : COLORS.danger}
-                                                />
-                                            </View>
-                                            <Text style={styles.fileItemName} numberOfLines={1}>{file.name}</Text>
-                                            <TouchableOpacity onPress={() => removeFile(idx)} style={styles.removeFileBtn}>
-                                                <Ionicons name="close-circle" size={20} color={COLORS.danger} />
-                                            </TouchableOpacity>
-                                        </View>
-                                    ))}
-                                </View>
-                            ) : (
-                                <TouchableOpacity style={styles.imageZone} onPress={pickImage}>
-                                    <View style={styles.imagePlaceholder}>
-                                        <Ionicons name="cloud-upload-outline" size={40} color={COLORS.border} />
-                                        <Text style={styles.imageHint}>Tap to add photos or documents</Text>
-                                    </View>
-                                </TouchableOpacity>
-                            )}
-
-                            <TouchableOpacity style={styles.submitAction} onPress={handleAddDocument}>
-                                <LinearGradient
-                                    colors={[COLORS.primary, COLORS.primaryDark]}
-                                    style={styles.submitGradient}
-                                    start={{ x: 0, y: 0 }}
-                                    end={{ x: 1, y: 1 }}
-                                >
-                                    <Text style={styles.submitActionText}>Save Document</Text>
-                                </LinearGradient>
-                            </TouchableOpacity>
-                            <View style={{ height: 30 }} />
-                        </ScrollView>
                     </View>
                 </TouchableOpacity>
             </Modal>
@@ -658,7 +488,7 @@ const styles = StyleSheet.create({
     modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 },
     modalTitle: { fontSize: 22, fontWeight: 'bold', color: COLORS.text },
     closeBtn: { padding: 4 },
-    inputLabel: { fontSize: 14, fontWeight: '700', color: COLORS.text, marginBottom: 12, marginTop: 20 },
+    label: { fontSize: 14, fontWeight: 'bold', color: COLORS.text, marginBottom: 8, marginTop: 12 },
     typeSelector: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
     typeChip: { paddingHorizontal: 16, paddingVertical: 8, borderRadius: 10, borderWidth: 1, borderColor: '#E2E8F0', backgroundColor: '#F8FAFC' },
     typeChipActive: { backgroundColor: COLORS.primary, borderColor: COLORS.primary },
@@ -685,6 +515,10 @@ const styles = StyleSheet.create({
         borderColor: '#DBEAFE',
     },
     miniPickText: { fontSize: 12, fontWeight: 'bold', color: COLORS.primary },
+    modalFooter: { flexDirection: 'row', gap: 15, marginTop: 20 },
+    modalBtn: { flex: 1, borderRadius: 16, overflow: 'hidden', ...SHADOWS.medium },
+    cancelModalBtn: { backgroundColor: '#F1F5F9', borderWidth: 1, borderColor: '#E2E8F0', alignItems: 'center', justifyContent: 'center', shadowOpacity: 0, elevation: 0 },
+    cancelModalBtnText: { color: COLORS.textLight, fontSize: 16, fontWeight: '600', paddingVertical: 16 },
     fileList: { gap: 10 },
     fileItem: {
         flexDirection: 'row',

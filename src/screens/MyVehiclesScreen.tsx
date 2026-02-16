@@ -8,12 +8,18 @@ import {
     Image,
     SafeAreaView,
     Alert,
+    ToastAndroid,
+    Platform,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { COLORS, SIZES, SHADOWS } from '../constants/theme';
 import { useApp, Vehicle } from '../context/AppContext';
 import VehicleCard from '../components/VehicleCard';
+import apiClient from '../api/apiClient';
+import { useAuth } from '../context/AuthContext';
+import { useState, useEffect } from 'react';
+import { ActivityIndicator } from 'react-native';
 
 const MOCK_VEHICLES: Vehicle[] = [
     {
@@ -160,8 +166,117 @@ const MOCK_VEHICLES: Vehicle[] = [
 ];
 
 export default function MyVehiclesScreen({ navigation }: { navigation: any }) {
-    const { vehicles, deleteVehicle } = useApp();
-    const allVehicles = [...MOCK_VEHICLES, ...vehicles];
+    const { user } = useAuth();
+    // console.log("user",user)
+    const [vehicles, setVehicles] = useState<Vehicle[]>([]);
+    const [isLoading, setIsLoading] = useState(true);
+    const [vehicleTypes, setVehicleTypes] = useState<any[]>([]);
+    const [fuelTypes, setFuelTypes] = useState<any[]>([]);
+
+    useEffect(() => {
+        fetchData();
+
+        const unsubscribe = navigation.addListener('focus', () => {
+            fetchData();
+        });
+
+        return unsubscribe;
+    }, [user?.id]);
+
+    const fetchVehicleTypes = async () => {
+        try {
+            const response = await apiClient.get('/vehicle-type');
+            return response.data || [];
+        } catch (error) {
+            console.error('Error fetching vehicle types:', error);
+
+        }
+    };
+
+    const fetchFuelTypes = async () => {
+        try {
+            const response = await apiClient.get('/fuelType');
+            return response.data || [];
+        } catch (error) {
+            console.error('Error fetching fuel types:', error);
+
+        }
+    };
+
+    const fetchVehicles = async (currentVTypes: any[], currentFTypes: any[]) => {
+        if (!user?.id) return;
+        try {
+            const response = await apiClient.get(`/vehicles?userId=${user.id}`);
+            const fetchedVehicles = response.data || [];
+
+            // Map API response to Vehicle interface
+            const mappedVehicles: Vehicle[] = fetchedVehicles.map((v: any) => ({
+                id: v.id.toString(),
+                brand: v.customBrandName || v.brandId?.toString() || '',
+                model: v.customModelName || v.modelId?.toString() || '',
+                year: v.year?.toString() || '',
+                registration: v.registration || '',
+                purchaseDate: v.purchaseDate,
+                purchasePrice: v.purchasePrice?.toString(),
+                fuelType: currentFTypes.find((t: any) => t.id === v.fuelTypeId)?.name || 'Unknown',
+                vehicleType: currentVTypes.find((t: any) => t.id === v.vehicleTypeId)?.name?.toLowerCase() || 'car',
+                mileage: v.mileage ? v.mileage.toString() : '',
+                engine: v.engineCapacity,
+                transmission: v.transmission,
+                color: v.color,
+                fuelAvg: v.fuelAvg ? v.fuelAvg.toString() : '',
+                image: v.imageUrl,
+                status: v.isActive ? 'Active' : 'Inactive',
+                statusColor: v.isActive ? COLORS.success : COLORS.danger,
+                ownerId: v.userId.toString(),
+                totalTrips: v.totalTrips,
+                totalRefuels: v.totalRefuels,
+                insuranceExpiry: v.insuranceExpiry
+            }));
+
+            setVehicles(mappedVehicles);
+        } catch (error) {
+            console.error('Error fetching vehicles:', error);
+        }
+    };
+
+    const fetchData = async () => {
+        if (!user?.id) return;
+        setIsLoading(true);
+        try {
+            // Fetch metadata sequentially or in parallel, but keep functions separate
+            const vTypes = await fetchVehicleTypes();
+            setVehicleTypes(vTypes);
+
+            const fTypes = await fetchFuelTypes();
+            setFuelTypes(fTypes);
+
+            await fetchVehicles(vTypes, fTypes);
+
+        } catch (error) {
+            console.error('Error fetching data:', error);
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
+    const deleteVehicle = async (vehicleId: string) => {
+        try {
+            setIsLoading(true);
+            const response = await apiClient.delete(`/vehicles/${vehicleId}`);
+            if (response.status >= 200 && response.status < 300) {
+                if (Platform.OS === 'android') {
+                    ToastAndroid.show('Vehicle deleted successfully', ToastAndroid.SHORT);
+                }
+                fetchData(); // Refresh the list
+            }
+        } catch (error) {
+            console.error('Error deleting vehicle:', error);
+            Alert.alert('Error', 'Failed to delete vehicle. Please try again.');
+        } finally {
+            setIsLoading(false);
+        }
+    };
 
     const handleDeleteVehicle = (vehicleId: string, vehicleName: string) => {
         Alert.alert(
@@ -182,37 +297,35 @@ export default function MyVehiclesScreen({ navigation }: { navigation: any }) {
         navigation.navigate('AddService', { vehicleId });
     };
 
+    if (isLoading) {
+        return (
+            <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#F8FAFC' }}>
+                <ActivityIndicator size="large" color={COLORS.primary} />
+            </View>
+        );
+    }
+
     return (
         <View style={styles.container}>
-            {/* <SafeAreaView style={styles.topHeader}>
-                <TouchableOpacity onPress={() => navigation.goBack()} style={styles.headerBtn}>
-                    <Ionicons name="chevron-back" size={24} color={COLORS.text} />
-                </TouchableOpacity>
-                <Text style={styles.topHeaderTitle}>My Vehicles</Text>
-                <View style={styles.headerRightBtns}>
-                    <TouchableOpacity style={styles.headerBtn}>
-                        <Ionicons name="share-social-outline" size={22} color={COLORS.text} />
-                    </TouchableOpacity>
-                    <TouchableOpacity style={styles.headerBtn}>
-                        <Ionicons name="heart-outline" size={22} color={COLORS.text} />
-                    </TouchableOpacity>
-                </View>
-            </SafeAreaView> */}
-
             <ScrollView
                 contentContainerStyle={styles.scrollContent}
                 showsVerticalScrollIndicator={false}
             >
-
-                {allVehicles.map((v) => (
-                    <VehicleCard
-                        key={v.id}
-                        vehicle={v}
-                        onPress={() => navigation.navigate('VehicleDetails', { vehicle: v })}
-                        onService={() => handleServiceVehicle(v.id)}
-                        onDelete={() => handleDeleteVehicle(v.id, `${v.brand} ${v.model}`)}
-                    />
-                ))}
+                {vehicles.length === 0 ? (
+                    <View style={{ alignItems: 'center', marginTop: 50 }}>
+                        <Text style={{ color: COLORS.textLight }}>No vehicles found. Add one!</Text>
+                    </View>
+                ) : (
+                    vehicles.map((v) => (
+                        <VehicleCard
+                            key={v.id}
+                            vehicle={v}
+                            onPress={() => navigation.navigate('VehicleDetails', { vehicle: v })}
+                            onService={() => handleServiceVehicle(v.id)}
+                            onDelete={() => handleDeleteVehicle(v.id, `${v.brand} ${v.model}`)}
+                        />
+                    ))
+                )}
 
                 {/* Extra space for FAB */}
                 <View style={{ height: 80 }} />

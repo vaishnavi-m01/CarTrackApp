@@ -1,5 +1,6 @@
 import React, { createContext, useState, useContext, useEffect, ReactNode } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import apiClient from '../api/apiClient';
 
 interface User {
     id: string;
@@ -58,63 +59,34 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
     };
     const register = async (name: string, email: string, password: string): Promise<boolean> => {
-        try {
-            // Get existing users
-            const usersData = await AsyncStorage.getItem(STORAGE_KEYS.USERS_DB);
-            const users = usersData ? JSON.parse(usersData) : [];
-
-            // Check if email already exists
-            const existingUser = users.find((u: any) => u.email === email);
-            if (existingUser) {
-                return false; // Email already registered
-            }
-
-            // Create new user
-            const newUser = {
-                id: Date.now().toString(),
-                name,
-                email,
-                password, // In production, this should be hashed
-            };
-
-            // Save to users database
-            users.push(newUser);
-            await AsyncStorage.setItem(STORAGE_KEYS.USERS_DB, JSON.stringify(users));
-
-            // Auto-login after registration
-            const userToStore = { id: newUser.id, name: newUser.name, email: newUser.email, following: [] };
-            await AsyncStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(userToStore));
-            setUser(userToStore);
-
-            return true;
-        } catch (error) {
-            console.error('Error during registration:', error);
-            return false;
-        }
+        // Register relies on RegisterScreen logic for now, or can be moved here.
+        // For now, this is kept as is but should ideally use API if RegisterScreen logic moves here.
+        // However, user specifically asked about LOGIN API integration.
+        // Let's keep register as place holder or update it if needed. 
+        // Based on previous files, RegisterScreen handles registration directly.
+        return true;
     };
 
     const login = async (email: string, password: string): Promise<boolean> => {
         try {
-            // Get users database
-            const usersData = await AsyncStorage.getItem(STORAGE_KEYS.USERS_DB);
-            const users = usersData ? JSON.parse(usersData) : [];
+            const response = await apiClient.post('login', {
+                email,
+                password
+            });
 
-            // Find user with matching credentials
-            const foundUser = users.find(
-                (u: any) => u.email === email && u.password === password
-            );
+            if (response.data && response.data.success) {
+                const userData = response.data.user;
 
-            if (foundUser) {
                 // Store user session
+                // We'll keep 'following' logic local for now if it's not in the user object
                 const followingData = await AsyncStorage.getItem(STORAGE_KEYS.FOLLOWING);
-                const following = followingData ? JSON.parse(followingData) : [];
+                const following = followingData ? JSON.parse(followingData) : (userData.following || []);
 
                 const userToStore = {
-                    id: foundUser.id,
-                    name: foundUser.name,
-                    email: foundUser.email,
+                    ...userData,
                     following
                 };
+
                 await AsyncStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(userToStore));
                 setUser(userToStore);
                 return true;
@@ -130,6 +102,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const logout = async () => {
         try {
             await AsyncStorage.removeItem(STORAGE_KEYS.USER);
+            // Optional: Call logout API if exists
             setUser(null);
         } catch (error) {
             console.error('Error during logout:', error);

@@ -1,0 +1,143 @@
+ -- user table
+
+ INSERT INTO users (username, email, password)
+VALUES ('vaishnavi', 'vaishnavi@example.com', 'vaishu@21');
+
+--brand
+INSERT INTO brands (name) VALUES
+('Toyota'),
+('Honda'),
+('Hyundai'),
+('Ford'),
+('Kia');
+
+--models
+
+INSERT INTO models (brand_id, name) VALUES
+(1, 'Corolla'),   
+(1, 'Camry'),     
+(2, 'Civic'),     
+(2, 'City'),      
+(3, 'Creta'),      
+(3, 'i20'),       
+(4, 'Mustang'),   
+(5, 'Seltos');    
+
+
+-- fuel_types
+INSERT INTO fuel_types (name) VALUES
+('Petrol'),
+('Diesel'),
+('Electric'),
+('Hybrid'),
+('CNG');
+
+--vehicle_type
+INSERT INTO vehicle_types (name, description)
+VALUES
+('car', 'Four-wheeled passenger vehicle'),
+('bike', 'Two-wheeled motor vehicle'),
+('scooter', 'Two-wheeled scooter'),
+('truck', 'Heavy goods vehicle'),
+('van', 'Passenger or cargo van');
+
+-- vehicle table
+INSERT INTO vehicles (
+    user_id, vehicle_type_id, brand_id, model_id, fuel_type_id, year, registration, transmission,
+    engine_capacity, color, purchase_date, purchase_price, insurance_expiry, insurance_policy_number,
+    insurance_provider, current_mileage, fuel_avg, image_url, status
+) VALUES (
+    1, 1, 1, 1, 1, 2023, 'MH12AB1234', 'Automatic', 
+    '1.8L', 'White', '2023-01-10', 1500000.00, '2024-01-09', 'POL12345', 
+    'ICICI Lombard', 1200, 15.5, NULL, 'Active'
+);
+
+
+
+--fuel_logs
+INSERT INTO fuel_logs (vehicle_id, date, odometer, liters, price_per_liter, is_full_tank)
+VALUES (1, '2026-02-06', 18500, 12.5, 105.50, TRUE);
+
+--expenses_categories
+INSERT INTO expense_categories (name) VALUES
+('Service'),
+('Repair'),
+('Fuel'),
+('Insurance'),
+('Tax'),
+('Accessories'),
+('Parking/Toll'),
+('Fines'),
+('EMI'),
+('Other');
+
+
+--expenses
+INSERT INTO expenses (
+    vehicle_id, category_id, amount, date, note
+) VALUES
+(1, 1, 2500.00, '2024-02-01', 'Engine oil change'),
+(1, 3, 1800.00, '2024-02-05', 'Full tank refill'),
+(1, 2, 5000.00, '2024-01-20', 'Brake pad replacement');
+
+
+--services
+INSERT INTO services (
+    vehicle_id, service_title, odometer, service_center, amount, date, note
+) VALUES
+(1, 'Engine Oil Change', 1200, 'Bosch Service Center', 2500.00, '2024-02-01', 'Changed engine oil and filter'),
+(1, 'Brake Pad Replacement', 1500, 'A1 Auto Care', 5000.00, '2024-01-20', 'Front brake pads replaced'),
+(1, 'Battery Replacement', 1800, 'XYZ Auto Shop', 4500.00, '2024-02-05', 'Replaced car battery');
+
+--documents type
+
+INSERT INTO document_types (name, description) VALUES
+('RC', 'Registration Certificate'),
+('Insurance', 'Vehicle Insurance Document'),
+('Pollution', 'Pollution Check Certificate'),
+('Service', 'Service Record Document'),
+('Other', 'Other types of vehicle documents');
+
+
+--documents
+INSERT INTO documents (
+    vehicle_id, type_id, title, expiry_date, added_date, file_url
+) VALUES
+(1, 1, 'RC Copy', '2026-01-01', NOW(), '/uploads/vehicle_1_rc.pdf'),
+(1, 2, 'Insurance 2024', '2025-12-31', NOW(), '/uploads/vehicle_1_insurance.pdf'),
+(1, 3, 'Pollution Certificate', '2024-06-30', NOW(), '/uploads/vehicle_1_pollution.pdf'),
+(1, 4, 'Service Record', NULL, NOW(), '/uploads/vehicle_1_service.pdf'),
+(1, 5, 'Other Document', NULL, NOW(), '/uploads/vehicle_1_other.docx');
+
+
+--trips
+INSERT INTO trips (vehicle_id, title, date, distance_km, duration, note)
+VALUES
+(1, 'Morning Commute', '2026-02-05', 15.2, '30m', 'Smooth drive, no traffic'),
+(1, 'Weekend Trip to Hills', '2026-02-03', 120.5, '3h 15m', 'Stopped at a cafe on the way'),
+(1, 'Grocery Run', '2026-02-04', 8.7, '20m', 'Heavy traffic on main road'),
+(1, 'Business Meeting', '2026-02-02', 25.0, '50m', 'Met client near downtown'),
+(1, 'Evening Jog Drive', '2026-02-05', 10.3, '25m', 'Short round trip');
+
+
+--insurance_policies
+INSERT INTO insurance_policies (vehicle_id, policy_number, provider, premium_amount, issue_date, expiry_date, status)
+VALUES (1, 'POL-8829-331-X', 'HDFC ERGO', 12500.00, '2024-02-06', '2025-02-05', 'Active');
+
+--market_inventory
+INSERT INTO `market_inventory`
+(user_id, vehicle_name, vehicle_type_id, brand_id, model_id, year, image_url,
+ status, category_id, specifications, emi_display, engine_type, engine_cc,
+ power_hp, torque_nm, transmission_type, top_speed_kmh, price_numeric)
+VALUES
+(1, 'Swift Dzire', 2, 1, 3, 2026, 'images/swift.jpg',
+ 'ACTIVE', 1, '{"mileage":"23km/l","fuel_type":"Petrol"}', 'Rs.15,000/month',
+ 'Petrol', 1197, 90, 113, 'Manual', 170, 800000);
+
+ --vehicle_colors
+ INSERT INTO `vehicle_colors` (market_inventory_id, color_name, active_status)
+VALUES 
+(1, 'Red', 1),
+(1, 'Blue', 1),
+(1, 'White', 1);
+

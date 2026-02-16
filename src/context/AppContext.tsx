@@ -4,6 +4,8 @@ import { Story, StoryGroup } from '../types/Story';
 import { GalleryAlbum } from '../types/Gallery';
 import { useAuth } from './AuthContext';
 import AndroidToastComponent from '../components/AndroidToast';
+import apiClient from '../api/apiClient';
+import { COLORS } from '../constants/theme';
 
 // --- Types ---
 export interface Vehicle {
@@ -28,6 +30,8 @@ export interface Vehicle {
     engine?: string;
     transmission?: string;
     color?: string;
+    totalTrips?: number;
+    totalRefuels?: number;
 }
 
 export interface DocumentFile {
@@ -120,6 +124,8 @@ interface AppContextType {
     addMediaToGallery: (albumId: string, media: MediaItem[]) => void;
     toggleSavedNews: (id: number) => void;
     AndroidToast: (message: string, type?: 'success' | 'error') => void;
+    fetchVehicles: () => Promise<void>;
+    isLoading: boolean;
 }
 
 // Initial Data Constants
@@ -430,6 +436,63 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
         setToastType(type);
         setToastVisible(true);
     };
+
+    const [isLoading, setIsLoading] = useState(false);
+
+    // Fetch vehicles from API
+    const fetchVehicles = async () => {
+        if (!user?.id) return;
+        setIsLoading(true);
+        try {
+            // First fetch types to map them
+            const [vTypesRes, fTypesRes, vehiclesRes] = await Promise.all([
+                apiClient.get('/vehicle-type'),
+                apiClient.get('/fuelType'),
+                apiClient.get(`/vehicles?userId=${user.id}`)
+            ]);
+
+            const vTypes = vTypesRes.data || [];
+            const fTypes = fTypesRes.data || [];
+            const fetchedVehicles = vehiclesRes.data || [];
+
+            const mappedVehicles: Vehicle[] = fetchedVehicles.map((v: any) => ({
+                id: v.id.toString(),
+                brand: v.customBrandName || v.brandId?.toString() || '',
+                model: v.customModelName || v.modelId?.toString() || '',
+                year: v.year?.toString() || '',
+                registration: v.registration || '',
+                purchaseDate: v.purchaseDate,
+                purchasePrice: v.purchasePrice?.toString(),
+                fuelType: fTypes.find((t: any) => t.id === v.fuelTypeId)?.name || 'Unknown',
+                vehicleType: vTypes.find((t: any) => t.id === v.vehicleTypeId)?.name?.toLowerCase() || 'car',
+                mileage: v.mileage ? v.mileage.toString() : '0',
+                engine: v.engineCapacity,
+                transmission: v.transmission,
+                color: v.color,
+                fuelAvg: v.fuelAvg ? v.fuelAvg.toString() : '0',
+                image: v.imageUrl,
+                status: v.isActive ? 'Active' : 'Inactive',
+                statusColor: v.isActive ? '#10b981' : '#ef4444',
+                ownerId: v.userId?.toString(),
+                totalTrips: v.totalTrips || 0,
+                totalRefuels: v.totalRefuels || 0,
+                insuranceExpiry: v.insuranceExpiry
+            }));
+
+            setVehicles(mappedVehicles);
+        } catch (error) {
+            console.error('Error fetching vehicles in AppContext:', error);
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
+    // Load vehicles on user change
+    useEffect(() => {
+        if (user?.id) {
+            fetchVehicles();
+        }
+    }, [user?.id]);
 
     // Reset state when user logs out
     useEffect(() => {
@@ -769,6 +832,8 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
                 savedNewsIds,
                 toggleSavedNews,
                 AndroidToast,
+                fetchVehicles,
+                isLoading,
             }}
         >
             {children}

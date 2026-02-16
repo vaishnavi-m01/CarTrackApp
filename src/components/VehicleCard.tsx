@@ -60,16 +60,13 @@ export default function VehicleCard({ vehicle, onPress, onDelete, onService, isA
                     {vehicle.image ? (
                         <Image source={{ uri: vehicle.image }} style={styles.carImage} />
                     ) : (
-                        <LinearGradient
-                            colors={['#E5E7EB', '#F3F4F6']}
-                            style={styles.imagePlaceholder}
-                        >
+                        <View style={styles.imagePlaceholder}>
                             <Ionicons
                                 name={vehicle.vehicleType === 'bike' ? 'bicycle-outline' : 'car-outline'}
-                                size={60}
-                                color={COLORS.gray}
+                                size={50}
+                                color={COLORS.border}
                             />
-                        </LinearGradient>
+                        </View>
                     )}
 
                     <View style={styles.overlayContainer}>
@@ -84,40 +81,45 @@ export default function VehicleCard({ vehicle, onPress, onDelete, onService, isA
                     </View>
 
                     {isActive && (
-                        <LinearGradient
-                            colors={[COLORS.primary, COLORS.primaryDark]}
-                            style={styles.activeBadgeOverlay}
-                            start={{ x: 0, y: 0 }}
-                            end={{ x: 1, y: 0 }}
-                        >
-                            <Ionicons name="checkmark-circle" size={14} color={COLORS.white} />
-                            <Text style={styles.activeBadgeText}>ACTIVE</Text>
-                        </LinearGradient>
+                        <View style={styles.activeLabelOverlay}>
+                            <Ionicons name="checkmark-circle" size={12} color={COLORS.white} />
+                            <Text style={styles.activeLabelText}>IN USE</Text>
+                        </View>
                     )}
                 </View>
 
                 <View style={styles.cardInfoSection}>
                     <View style={styles.cardHeaderRow}>
-                        <View>
-                            <Text style={styles.brandText}>{vehicle.brand}</Text>
-                            <Text style={styles.modelText}>{vehicle.model}</Text>
+                        <View style={{ flex: 1 }}>
+                            <Text style={styles.brandText} numberOfLines={1}>{vehicle.brand}</Text>
+                            <Text style={styles.modelText} numberOfLines={1}>{vehicle.model}</Text>
                         </View>
-                        <Text style={styles.regText}>{vehicle.registration}</Text>
+                        <View style={styles.regBadge}>
+                            <Text style={styles.regText}>{vehicle.registration}</Text>
+                        </View>
                     </View>
+
+                    <View style={styles.divider} />
 
                     <View style={styles.statsRow}>
                         <View style={styles.statFlexItem}>
-                            <Ionicons name="speedometer-outline" size={14} color={COLORS.primary} />
-                            <Text style={styles.statLabelText} numberOfLines={1}>
-                                {vehicle.mileage || '0'} km
-                            </Text>
+                            <View style={[styles.statIconContainer, { backgroundColor: '#f0fdf4' }]}>
+                                <Ionicons name="speedometer-outline" size={14} color="#10b981" />
+                            </View>
+                            <View>
+                                <Text style={styles.statValueText}>{vehicle.mileage || '0'} km</Text>
+                                <Text style={styles.statSubtitle}>Odometer</Text>
+                            </View>
                         </View>
-                        <View style={styles.statDivider} />
+
                         <View style={styles.statFlexItem}>
-                            <Ionicons name="water-outline" size={14} color={COLORS.primary} />
-                            <Text style={styles.statLabelText} numberOfLines={1}>
-                                {vehicle.fuelAvg || '--'} {vehicle.fuelType === 'Electric' ? 'Wh/km' : 'km/l'}
-                            </Text>
+                            <View style={[styles.statIconContainer, { backgroundColor: '#eff6ff' }]}>
+                                <Ionicons name="water-outline" size={14} color="#3b82f6" />
+                            </View>
+                            <View>
+                                <Text style={styles.statValueText}>{vehicle.fuelAvg || '--'} {vehicle.fuelType === 'Electric' ? 'Wh/km' : 'km/l'}</Text>
+                                <Text style={styles.statSubtitle}>Avg Fuel</Text>
+                            </View>
                         </View>
                     </View>
 
@@ -127,19 +129,20 @@ export default function VehicleCard({ vehicle, onPress, onDelete, onService, isA
                             onPress={onPress}
                         >
                             <Text style={styles.detailsBtnText}>View Details</Text>
-                            <Ionicons name="chevron-forward" size={16} color={COLORS.primary} />
+                            <Ionicons name="chevron-forward" size={12} color={COLORS.primary} />
                         </TouchableOpacity>
 
                         <View style={styles.actionButtons}>
                             {onService && (
                                 <TouchableOpacity style={styles.actionIconButton} onPress={onService}>
-                                    <Ionicons name="build-outline" size={18} color={COLORS.primary} />
+                                    <View style={styles.secondaryDot} />
+                                    <Ionicons name="build-outline" size={18} color={COLORS.textLight} />
                                 </TouchableOpacity>
                             )}
 
                             {onDelete && (
-                                <TouchableOpacity style={styles.actionIconButton} onPress={onDelete}>
-                                    <Ionicons name="trash-outline" size={18} color={COLORS.danger} />
+                                <TouchableOpacity style={[styles.actionIconButton, { borderColor: '#fee2e2' }]} onPress={onDelete}>
+                                    <Ionicons name="trash-outline" size={18} color="#ef4444" />
                                 </TouchableOpacity>
                             )}
                         </View>
@@ -153,18 +156,19 @@ export default function VehicleCard({ vehicle, onPress, onDelete, onService, isA
 const styles = StyleSheet.create({
     cardWrapper: {
         marginBottom: 20,
-        ...SHADOWS.medium,
+        marginHorizontal: 4,
     },
     premiumCard: {
         backgroundColor: COLORS.white,
-        borderRadius: 24,
+        borderRadius: 20,
         overflow: 'hidden',
-        flexDirection: 'column',
+        borderWidth: 1,
+        borderColor: COLORS.border,
     },
     cardImageSection: {
-        height: 160,
+        height: 180,
         width: '100%',
-        backgroundColor: '#F1F5F9',
+        backgroundColor: '#F8FAFC',
         position: 'relative',
     },
     carImage: {
@@ -176,62 +180,7 @@ const styles = StyleSheet.create({
         flex: 1,
         justifyContent: 'center',
         alignItems: 'center',
-    },
-    fuelChip: {
-        position: 'absolute',
-        top: 12,
-        left: 12,
-        flexDirection: 'row',
-        alignItems: 'center',
-        paddingVertical: 6,
-        paddingHorizontal: 10,
-        borderRadius: 12,
-        gap: 4,
-    },
-    fuelChipText: {
-        color: COLORS.white,
-        fontSize: 10,
-        fontWeight: 'bold',
-    },
-    statusBadgeOverlay: {
-        position: 'absolute',
-        top: 12,
-        right: 12,
-        paddingVertical: 4,
-        paddingHorizontal: 10,
-        borderRadius: 8,
-        ...SHADOWS.light,
-    },
-    statusBadgeText: {
-        color: COLORS.white,
-        fontSize: 10,
-        fontWeight: 'bold',
-        textTransform: 'uppercase',
-    },
-    cardInfoSection: {
-        padding: 16,
-    },
-    cardHeaderRow: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'flex-start',
-    },
-    brandText: {
-        fontSize: 12,
-        color: COLORS.textLight,
-        fontWeight: '600',
-        textTransform: 'uppercase',
-    },
-    modelText: {
-        fontSize: 20,
-        fontWeight: 'bold',
-        color: COLORS.text,
-        marginTop: 2,
-    },
-    regText: {
-        fontSize: 13,
-        color: COLORS.textLight,
-        fontWeight: '500',
+        backgroundColor: '#f1f5f9',
     },
     overlayContainer: {
         position: 'absolute',
@@ -242,41 +191,124 @@ const styles = StyleSheet.create({
         justifyContent: 'space-between',
         padding: 12,
     },
-    actionButtons: {
+    fuelChip: {
         flexDirection: 'row',
-        gap: 8,
+        alignItems: 'center',
+        paddingVertical: 4,
+        paddingHorizontal: 10,
+        borderRadius: 8,
+        gap: 4,
+    },
+    fuelChipText: {
+        color: COLORS.white,
+        fontSize: 10,
+        fontWeight: 'bold',
+        textTransform: 'uppercase',
+    },
+    statusBadgeOverlay: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingVertical: 3,
+        paddingHorizontal: 8,
+        borderRadius: 6,
+    },
+    statusBadgeText: {
+        color: COLORS.white,
+        fontSize: 9,
+        fontWeight: 'bold',
+        textTransform: 'uppercase',
+        letterSpacing: 0.3,
+    },
+    activeLabelOverlay: {
+        position: 'absolute',
+        bottom: 12,
+        left: 12,
+        backgroundColor: 'rgba(0,0,0,0.6)',
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingVertical: 4,
+        paddingHorizontal: 8,
+        borderRadius: 6,
+        gap: 4,
+    },
+    activeLabelText: {
+        color: COLORS.white,
+        fontSize: 9,
+        fontWeight: 'bold',
+        letterSpacing: 0.5,
+    },
+    cardInfoSection: {
+        padding: 16,
+    },
+    cardHeaderRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        gap: 12,
+    },
+    brandText: {
+        fontSize: 11,
+        color: COLORS.textLight,
+        fontWeight: 'bold',
+        textTransform: 'uppercase',
+        letterSpacing: 1,
+    },
+    modelText: {
+        fontSize: 18,
+        fontWeight: 'bold',
+        color: COLORS.text,
+        marginTop: 2,
+    },
+    regBadge: {
+        backgroundColor: '#f8fafc',
+        paddingVertical: 4,
+        paddingHorizontal: 10,
+        borderRadius: 6,
+        borderWidth: 1,
+        borderColor: COLORS.border,
+    },
+    regText: {
+        fontSize: 11,
+        color: COLORS.text,
+        fontWeight: 'bold',
+    },
+    divider: {
+        height: 1,
+        backgroundColor: '#f1f5f9',
+        marginVertical: 16,
     },
     statsRow: {
         flexDirection: 'row',
         alignItems: 'center',
-        marginTop: 16,
-        backgroundColor: '#F8FAFC',
-        padding: 12,
-        borderRadius: 16,
-        gap: 12,
+        gap: 20,
     },
     statFlexItem: {
         flex: 1,
         flexDirection: 'row',
         alignItems: 'center',
-        gap: 6,
+        gap: 10,
     },
-    statLabelText: {
-        fontSize: 12,
+    statIconContainer: {
+        width: 32,
+        height: 32,
+        borderRadius: 10,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    statValueText: {
+        fontSize: 13,
         color: COLORS.text,
-        fontWeight: '600',
-        flexShrink: 1,
+        fontWeight: 'bold',
     },
-    statDivider: {
-        width: 1,
-        height: 14,
-        backgroundColor: '#CBD5E1',
-        marginHorizontal: 4,
+    statSubtitle: {
+        fontSize: 10,
+        color: COLORS.textLight,
+        marginTop: 1,
     },
     cardFooterActions: {
         flexDirection: 'row',
         alignItems: 'center',
-        marginTop: 16,
+        marginTop: 18,
         gap: 12,
     },
     detailsBtn: {
@@ -285,43 +317,37 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'center',
         backgroundColor: '#EEF2FF',
-        paddingVertical: 12,
-        borderRadius: 14,
-        gap: 6,
+        paddingVertical: 8,
+        borderRadius: 10,
+        gap: 4,
     },
     detailsBtnText: {
         color: COLORS.primary,
         fontWeight: 'bold',
-        fontSize: 14,
+        fontSize: 12,
+    },
+    actionButtons: {
+        flexDirection: 'row',
+        gap: 10,
     },
     actionIconButton: {
         width: 44,
         height: 44,
-        borderRadius: 14,
+        borderRadius: 12,
         backgroundColor: COLORS.white,
         borderWidth: 1,
-        borderColor: '#E2E8F0',
+        borderColor: COLORS.border,
         justifyContent: 'center',
         alignItems: 'center',
-        ...SHADOWS.light,
+        position: 'relative',
     },
-    activeBadgeOverlay: {
+    secondaryDot: {
         position: 'absolute',
-        bottom: 12,
-        right: 12,
+        top: 10,
+        right: 10,
+        width: 6,
+        height: 6,
+        borderRadius: 3,
         backgroundColor: COLORS.primary,
-        flexDirection: 'row',
-        alignItems: 'center',
-        paddingVertical: 6,
-        paddingHorizontal: 12,
-        borderRadius: 20,
-        gap: 6,
-        ...SHADOWS.medium,
-    },
-    activeBadgeText: {
-        color: COLORS.white,
-        fontSize: 10,
-        fontWeight: 'bold',
-        textTransform: 'uppercase',
-    },
+    }
 });
