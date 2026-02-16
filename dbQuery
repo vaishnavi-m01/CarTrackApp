@@ -104,7 +104,9 @@ CREATE TABLE `vehicles` (
   `custom_brand_name` varchar(100) DEFAULT NULL,
   `model_id` int DEFAULT NULL,
   `custom_model_name` varchar(100) DEFAULT NULL,
-  `vehicle_name` varchar(255) DEFAULT NULL,
+  `vehicle_name` varchar(100) DEFAULT NULL,
+  `fuel_avg` double DEFAULT '0',
+  `mileage` varchar(100) DEFAULT NULL,
   `fuel_type_id` int NOT NULL,
   `year` int NOT NULL,
   `registration` varchar(20) NOT NULL,
@@ -114,7 +116,7 @@ CREATE TABLE `vehicles` (
   `purchase_date` date DEFAULT NULL,
   `purchase_price` decimal(10,2) DEFAULT NULL,
   `image_url` varchar(255) DEFAULT NULL,
-  `status` varchar(255) NOT NULL,
+  `is_active` tinyint(1) NOT NULL DEFAULT '1',
   `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
@@ -129,7 +131,7 @@ CREATE TABLE `vehicles` (
   CONSTRAINT `fk_vehicle_model` FOREIGN KEY (`model_id`) REFERENCES `models` (`id`),
   CONSTRAINT `fk_vehicle_owner` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE,
   CONSTRAINT `FKk3cs3vldlan30kg1x6b57i4fe` FOREIGN KEY (`vehicle_type_id`) REFERENCES `vehicle_types` (`id`)
-) ENGINE=InnoDB AUTO_INCREMENT=28 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=32 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 --fuel_logs
 
