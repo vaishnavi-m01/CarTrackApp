@@ -9,6 +9,7 @@ import {
     Alert,
     Modal,
     RefreshControl,
+    Image,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
@@ -18,8 +19,10 @@ import Header from '../components/Header';
 import VehicleCard from '../components/VehicleCard';
 import NewsCard from '../components/NewsCard';
 import { useApp } from '../context/AppContext';
+import { useAuth } from '../context/AuthContext';
 import { StackNavigationProp } from '@react-navigation/stack';
 import { RootStackParamList } from '../navigation/MainNavigator';
+import apiClient from '../api/apiClient';
 
 type HomeScreenNavigationProp = StackNavigationProp<RootStackParamList, 'MainTabs'>;
 
@@ -28,11 +31,41 @@ interface HomeScreenProps {
 }
 
 export default function HomeScreen({ navigation }: HomeScreenProps) {
+    const { user } = useAuth();
     const [searchQuery, setSearchQuery] = useState('');
-    const { vehicles, savedNewsIds, toggleSavedNews, fetchVehicles, isLoading: isAppLoading } = useApp();
+    const { vehicles, savedNewsIds, toggleSavedNews, fetchVehicles, isLoading: isAppLoading, AndroidToast } = useApp();
     const [selectedVehicleId, setSelectedVehicleId] = useState<string | null>(null);
     const [isVehicleModalVisible, setVehicleModalVisible] = useState(false);
     const [refreshing, setRefreshing] = useState(false);
+    const [latestNews, setLatestNews] = useState<any[]>([]);
+    const [suggestedUsers, setSuggestedUsers] = useState<any[]>([]);
+
+    // Fetch latest news on mount
+    React.useEffect(() => {
+        fetchLatestNews();
+        fetchSuggestions();
+    }, [user?.id]);
+
+    const fetchSuggestions = async () => {
+        if (!user) return;
+        try {
+            const response = await apiClient.get(`/users/${user.id}/suggestions`);
+            setSuggestedUsers(response.data || []);
+        } catch (error) {
+            console.error('Error fetching suggestions for home screen:', error);
+        }
+    };
+
+    const fetchLatestNews = async () => {
+        try {
+            const response = await apiClient.get('/news-highlights');
+            const data = response.data || [];
+            // Take the top 3 items for the home screen
+            setLatestNews(data.slice(0, 3));
+        } catch (error) {
+            console.error('Error fetching latest news for home screen:', error);
+        }
+    };
 
     // Sync selected vehicle with available vehicles
     React.useEffect(() => {
@@ -52,6 +85,15 @@ export default function HomeScreen({ navigation }: HomeScreenProps) {
     const serviceDays = selectedVehicle ? getDaysRemaining(selectedVehicle.id, 25) : 15;
     const insuranceDays = selectedVehicle ? getDaysRemaining(selectedVehicle.id, 60) : 45;
 
+    // Dynamic Loan Estimations for Home Screen Banner
+    const loanPrincipal = selectedVehicle?.purchasePrice ? parseFloat(selectedVehicle.purchasePrice.replace(/,/g, '')) : 1000000;
+    const loanRate = 8.5 / 12 / 100;
+    const loanMonths = 5 * 12;
+    const estimatedEmi = loanPrincipal > 0 ? (loanPrincipal * loanRate * Math.pow(1 + loanRate, loanMonths)) / (Math.pow(1 + loanRate, loanMonths) - 1) : 0;
+
+    const formattedPrincipal = new Intl.NumberFormat('en-IN', { maximumFractionDigits: 0 }).format(loanPrincipal);
+    const formattedEmi = new Intl.NumberFormat('en-IN', { maximumFractionDigits: 0 }).format(Math.round(estimatedEmi));
+
     const stats = [
         { icon: '📅', label: 'Next Service', value: `${serviceDays} Days`, subtext: selectedVehicle?.model || 'General' },
         { icon: '🛡️', label: 'Insurance', value: `${insuranceDays} Days`, subtext: 'Expires Soon' },
@@ -66,36 +108,6 @@ export default function HomeScreen({ navigation }: HomeScreenProps) {
         { icon: 'cart', label: 'Market', color: COLORS.primary },
         { icon: 'map', label: 'Trips', color: COLORS.primary },
         { icon: 'shield-checkmark', label: 'Insurance', color: COLORS.primary },
-    ];
-
-    const latestNews = [
-        {
-            id: 1,
-            type: 'trending',
-            badgeText: '🔥 TRENDING',
-            title: 'Tesla Launches New Model Y with Advanced Autopilot Features',
-            source: 'AutoNews India',
-            time: '2 hours ago',
-            description: 'Tesla has unveiled its latest Model Y variant featuring enhanced autopilot capabilities and improved range. The new model includes advanced driver assistance systems and promises a range of over 500 kilometers on a single charge.',
-        },
-        {
-            id: 2,
-            type: 'launch',
-            badgeText: '⚡ NEW LAUNCH',
-            title: 'Tata Motors Unveils Electric SUV Harrier EV at ₹32 Lakh',
-            source: 'CarDekho',
-            time: '5 hours ago',
-            description: 'Tata Motors expands its EV portfolio with the new Harrier EV, featuring a 500km range. The electric SUV comes with fast charging capabilities and advanced connectivity features.',
-        },
-        {
-            id: 3,
-            type: 'price',
-            badgeText: '💰 PRICE DROP',
-            title: 'Hyundai Creta Gets ₹1.5 Lakh Discount This Month',
-            source: 'Team-BHP',
-            time: '1 day ago',
-            description: 'Limited time offer on Hyundai Creta with attractive finance schemes and exchange bonuses. The discount is applicable on select variants and includes additional benefits.',
-        },
     ];
 
     const handleNotification = () => {
@@ -139,14 +151,26 @@ export default function HomeScreen({ navigation }: HomeScreenProps) {
         setRefreshing(true);
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
         try {
-            await fetchVehicles();
+            await Promise.all([fetchVehicles(), fetchLatestNews(), fetchSuggestions()]);
             Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         } catch (error) {
             console.error('Refresh error:', error);
         } finally {
             setRefreshing(false);
         }
-    }, [fetchVehicles]);
+    }, [fetchVehicles, user]);
+
+    const handleFollowSuggestedUser = async (targetId: number) => {
+        if (!user) return;
+        try {
+            await apiClient.post(`/users/${user.id}/follow/${targetId}`);
+            setSuggestedUsers(prev => prev.filter(u => u.id !== targetId));
+            AndroidToast('Follow request sent successfully!');
+        } catch (error) {
+            console.error('Error following suggested user from home screen:', error);
+            AndroidToast('Failed to follow user', 'error');
+        }
+    };
 
     return (
         <View style={styles.container}>
@@ -282,6 +306,47 @@ export default function HomeScreen({ navigation }: HomeScreenProps) {
                     </View>
                 </View>
 
+                {/* Suggested Users Section */}
+                {suggestedUsers.length > 0 && (
+                    <View style={styles.suggestionsSection}>
+                        <View style={styles.suggestionsHeader}>
+                            <Text style={styles.sectionTitle}>Suggested for You</Text>
+                            <TouchableOpacity>
+                                <Text style={styles.viewAll}>See All →</Text>
+                            </TouchableOpacity>
+                        </View>
+                        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.suggestionsList}>
+                            {suggestedUsers.map((sUser) => (
+                                <View key={sUser.id} style={styles.suggestionCard}>
+                                    <TouchableOpacity
+                                        style={styles.suggestionDismissBtn}
+                                        onPress={() => setSuggestedUsers(prev => prev.filter(u => u.id !== sUser.id))}
+                                    >
+                                        <Ionicons name="close" size={16} color={COLORS.gray} />
+                                    </TouchableOpacity>
+                                    <TouchableOpacity
+                                        style={styles.suggestionAvatarContainer}
+                                        onPress={() => (navigation as any).navigate('OtherUserProfile', { userId: sUser.id, userName: sUser.username || sUser.name || 'User' })}
+                                    >
+                                        <Image
+                                            source={{ uri: sUser.profilePicUrl || `https://ui-avatars.com/api/?name=${sUser.username || sUser.name || 'User'}&background=3B82F6&color=fff&size=128` }}
+                                            style={styles.suggestionAvatar}
+                                        />
+                                    </TouchableOpacity>
+                                    <Text style={styles.suggestionName} numberOfLines={1}>{sUser.username || sUser.name}</Text>
+                                    <Text style={styles.suggestionReason} numberOfLines={1}>Suggested for you</Text>
+                                    <TouchableOpacity
+                                        style={styles.followBtnSmall}
+                                        onPress={() => handleFollowSuggestedUser(sUser.id)}
+                                    >
+                                        <Text style={styles.followBtnTextSmall}>Follow</Text>
+                                    </TouchableOpacity>
+                                </View>
+                            ))}
+                        </ScrollView>
+                    </View>
+                )}
+
                 {/* Vehicle Comparison Feature */}
                 <LinearGradient
                     colors={['#f093fb', '#f5576c']}
@@ -322,25 +387,25 @@ export default function HomeScreen({ navigation }: HomeScreenProps) {
                     </View>
                     <View style={styles.loanInfo}>
                         <View style={styles.loanItem}>
-                            <Text style={styles.loanLabel}>Loan Amount</Text>
-                            <Text style={styles.loanValue}>₹10 Lakh</Text>
+                            <Text style={styles.loanLabel}>Vehicle</Text>
+                            <Text style={styles.loanValue} numberOfLines={1}>{selectedVehicle ? `${selectedVehicle.brand} ${selectedVehicle.model}` : 'Generic Car'}</Text>
                         </View>
                         <View style={styles.loanItem}>
-                            <Text style={styles.loanLabel}>Monthly EMI</Text>
-                            <Text style={styles.loanValue}>₹23,456</Text>
+                            <Text style={styles.loanLabel}>Est. Price</Text>
+                            <Text style={styles.loanValue}>₹{formattedPrincipal}</Text>
                         </View>
                         <View style={styles.loanItem}>
-                            <Text style={styles.loanLabel}>Interest Rate</Text>
-                            <Text style={styles.loanValue}>8.5% p.a.</Text>
+                            <Text style={styles.loanLabel}>Est. EMI</Text>
+                            <Text style={styles.loanValue}>₹{formattedEmi}</Text>
                         </View>
                         <View style={styles.loanItem}>
-                            <Text style={styles.loanLabel}>Tenure</Text>
-                            <Text style={styles.loanValue}>5 Years</Text>
+                            <Text style={styles.loanLabel}>Rate/Tenure</Text>
+                            <Text style={styles.loanValue}>8.5% / 5 Yrs</Text>
                         </View>
                     </View>
                     <TouchableOpacity
                         style={styles.loanBtn}
-                        onPress={() => navigation.navigate('LoanCalculator')}
+                        onPress={() => navigation.navigate('LoanCalculator', { amount: loanPrincipal.toString() })}
                         activeOpacity={0.8}
                     >
                         <Text style={styles.loanBtnText}>Calculate Your EMI</Text>
@@ -349,23 +414,25 @@ export default function HomeScreen({ navigation }: HomeScreenProps) {
                 </LinearGradient>
 
                 {/* Latest News Section */}
-                <View style={styles.section}>
-                    <View style={styles.sectionHeader}>
-                        <Text style={styles.sectionTitle}>Latest Auto News</Text>
-                        <TouchableOpacity onPress={() => navigation.navigate('News')}>
-                            <Text style={styles.viewAll}>View All →</Text>
-                        </TouchableOpacity>
+                {latestNews.length > 0 && (
+                    <View style={styles.section}>
+                        <View style={styles.sectionHeader}>
+                            <Text style={styles.sectionTitle}>Latest Auto News</Text>
+                            <TouchableOpacity onPress={() => navigation.navigate('News')}>
+                                <Text style={styles.viewAll}>View All →</Text>
+                            </TouchableOpacity>
+                        </View>
+                        {latestNews.map((news) => (
+                            <NewsCard
+                                key={news.id}
+                                news={{ ...news, id: news.id }}
+                                isSaved={savedNewsIds.includes(news.id)}
+                                onSave={() => toggleSavedNews(news.id)}
+                                onPress={() => navigation.navigate('NewsDetail', { news })}
+                            />
+                        ))}
                     </View>
-                    {latestNews.map((news) => (
-                        <NewsCard
-                            key={news.id}
-                            news={{ ...news, id: news.id }}
-                            isSaved={savedNewsIds.includes(news.id)}
-                            onSave={() => toggleSavedNews(news.id)}
-                            onPress={() => navigation.navigate('NewsDetail', { news })}
-                        />
-                    ))}
-                </View>
+                )}
 
                 <View style={{ height: 20 }} />
             </ScrollView>
@@ -496,6 +563,73 @@ const styles = StyleSheet.create({
         color: COLORS.textLight,
         fontWeight: '600',
         textAlign: 'center',
+    },
+    suggestionsSection: {
+        marginTop: 20,
+        paddingBottom: 5,
+    },
+    suggestionsHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        paddingHorizontal: SIZES.padding,
+        marginBottom: 15,
+    },
+    suggestionsList: {
+        paddingHorizontal: SIZES.padding,
+    },
+    suggestionCard: {
+        width: 140,
+        backgroundColor: COLORS.white,
+        borderWidth: 1,
+        borderColor: '#DBDBDB',
+        borderRadius: 8,
+        padding: 15,
+        alignItems: 'center',
+        marginRight: 10,
+        // ...SHADOWS.light, // Uncomment if you want a slight shadow
+    },
+    suggestionDismissBtn: {
+        position: 'absolute',
+        top: 8,
+        right: 8,
+        zIndex: 1,
+        padding: 4,
+    },
+    suggestionAvatarContainer: {
+        marginTop: 5,
+        marginBottom: 10,
+    },
+    suggestionAvatar: {
+        width: 80,
+        height: 80,
+        borderRadius: 40,
+    },
+    suggestionName: {
+        fontSize: 14,
+        fontWeight: '600',
+        color: COLORS.text,
+        textAlign: 'center',
+        marginBottom: 2,
+        width: '100%'
+    },
+    suggestionReason: {
+        fontSize: 12,
+        color: COLORS.textLight,
+        textAlign: 'center',
+        marginBottom: 15,
+    },
+    followBtnSmall: {
+        backgroundColor: COLORS.primary, // Instagram bright blue
+        width: '100%',
+        paddingVertical: 8,
+        borderRadius: 8,
+        alignItems: 'center',
+    },
+    followBtnTextSmall: {
+        color: COLORS.white,
+        fontSize: 13,
+        fontWeight: 'bold',
     },
     indicatorsContainer: {
         flexDirection: 'row',

@@ -15,7 +15,7 @@ import { RootStackParamList } from '../navigation/MainNavigator';
 import { StackNavigationProp } from '@react-navigation/stack';
 import { useApp } from '../context/AppContext';
 import { LinearGradient } from 'expo-linear-gradient';
-import NewsCard from '../components/NewsCard';
+import { NewsHighlight } from '../types/Community';
 
 type NewsDetailRouteProp = RouteProp<RootStackParamList, 'NewsDetail'>;
 
@@ -23,7 +23,7 @@ export default function NewsDetailScreen() {
     const navigation = useNavigation<StackNavigationProp<RootStackParamList>>();
     const route = useRoute<NewsDetailRouteProp>();
     const { savedNewsIds, toggleSavedNews } = useApp();
-    const { news } = route.params;
+    const news: NewsHighlight = route.params.news;
 
     const isSaved = savedNewsIds.includes(news.id);
 
@@ -73,8 +73,8 @@ export default function NewsDetailScreen() {
             </LinearGradient>
 
             <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
-                <View style={[styles.badge, { backgroundColor: news.type === 'trending' ? COLORS.danger : news.type === 'launch' ? COLORS.primary : COLORS.success }]}>
-                    <Text style={styles.badgeText}>{news.badgeText}</Text>
+                <View style={[styles.badge, { backgroundColor: news.isTrending ? COLORS.danger : COLORS.primary }]}>
+                    <Text style={styles.badgeText}>{news.badgeText || (news.isTrending ? '🔥 TRENDING' : 'NEWS')}</Text>
                 </View>
 
                 <Text style={styles.title}>{news.title}</Text>
@@ -82,52 +82,18 @@ export default function NewsDetailScreen() {
                 <View style={styles.meta}>
                     <View style={styles.source}>
                         <Text style={styles.sourceIcon}>📰</Text>
-                        <Text style={styles.sourceText}>{news.source}</Text>
+                        <Text style={styles.sourceText}>{news.source || 'AutoNews'}</Text>
                     </View>
-                    <Text style={styles.time}>{news.time}</Text>
                 </View>
 
                 <View style={styles.divider} />
 
                 <Text style={styles.description}>{news.description}</Text>
 
-                <Text style={styles.bodyText}>
-                    The automotive industry is witnessing a significant shift towards electrification and smart mobility. This latest update marks a crucial milestone in how manufacturers are approaching the future of transportation.
-                    {"\n\n"}
-                    With improved battery technology and autonomous driving features, users can expect a more seamless and safer driving experience. Experts suggest that these innovations will redefine the standards for the next generation of vehicles.
-                </Text>
-
-                {/* Related News Section */}
+                {/* Related News Section - Hidden when using real data to avoid crashes */}
                 <View style={styles.relatedSection}>
                     <Text style={styles.relatedTitle}>Related News</Text>
-                    {[
-                        {
-                            id: 101,
-                            type: 'trending',
-                            badgeText: '🔥 TRENDING',
-                            title: 'How Electric Vehicles are Changing the Indian Market',
-                            source: 'AutoToday',
-                            time: '3 hours ago',
-                            description: 'A deep dive into the rapid adoption of EVs across major Indian cities and the infrastructure growth supporting it.',
-                        },
-                        {
-                            id: 102,
-                            type: 'launch',
-                            badgeText: '⚡ NEW LAUNCH',
-                            title: 'Upcoming SUV Launches to Watch Out For in 2026',
-                            source: 'CarWale',
-                            time: '6 hours ago',
-                            description: 'A comprehensive list of the most anticipated SUV launches from top brands like Maruti, Hyundai, and Tata.',
-                        }
-                    ].map((item) => (
-                        <NewsCard
-                            key={item.id}
-                            news={item}
-                            isSaved={savedNewsIds.includes(item.id)}
-                            onSave={() => toggleSavedNews(item.id)}
-                            onPress={() => navigation.push('NewsDetail', { news: item })}
-                        />
-                    ))}
+                    <Text style={styles.emptyText}>Find more news in the News tab</Text>
                 </View>
             </ScrollView>
         </View>
@@ -236,5 +202,11 @@ const styles = StyleSheet.create({
         fontWeight: 'bold',
         color: COLORS.text,
         marginBottom: 20,
+    },
+    emptyText: {
+        color: COLORS.textLight,
+        fontSize: 14,
+        textAlign: 'center',
+        marginTop: 10,
     },
 });

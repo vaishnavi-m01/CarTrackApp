@@ -7,7 +7,6 @@ import {
     TextInput,
     TouchableOpacity,
     Platform,
-    Alert,
     Modal,
     Keyboard,
     KeyboardAvoidingView,
@@ -81,7 +80,9 @@ export default function AddServiceScreen({ navigation, route }: { navigation: an
 
     const handleSave = async () => {
         if (!selectedVehicleId || !title || !amount || !odometer) {
-            Alert.alert('Required Fields', 'Please fill in all mandatory fields (*)');
+            if (Platform.OS === 'android') {
+                ToastAndroid.show('Please fill in all mandatory fields (*)', ToastAndroid.SHORT);
+            }
             return;
         }
 
@@ -128,7 +129,9 @@ export default function AddServiceScreen({ navigation, route }: { navigation: an
             }
         } catch (error) {
             console.error('Error saving service record:', error);
-            Alert.alert('Error', 'Failed to save service record. Please try again.');
+            if (Platform.OS === 'android') {
+                ToastAndroid.show('Failed to save service record', ToastAndroid.SHORT);
+            }
         } finally {
             setIsSaving(false);
         }

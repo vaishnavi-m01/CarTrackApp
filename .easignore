@@ -1,0 +1,30 @@
+# Dependencies (reinstalled during build)
+node_modules/
+
+# Git
+.git/
+
+# IDE
+.idea/
+.vscode/
+
+# Expo
+.expo/
+
+# Android build caches (these are the big ones!)
+android/.gradle/
+android/.kotlin/
+android/build/
+android/app/build/
+
+# Logs and temp files
+crash_log.txt
+*.log
+
+# Query files (not needed for build)
+dbQuery
+insertQuery
+
+# OS files
+.DS_Store
+Thumbs.db

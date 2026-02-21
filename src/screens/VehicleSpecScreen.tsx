@@ -12,6 +12,7 @@ import {
     FlatList,
     Modal,
     Platform,
+    ActivityIndicator,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
@@ -27,10 +28,10 @@ const { width } = Dimensions.get('window');
 // Removed static SPECS as we now use dynamic data from vehicle.specs
 
 const COLORS_DATA = [
-    { name: 'Blue', color: '#3182CE' },
-    { name: 'White', color: '#FFFFFF' },
-    { name: 'Red', color: '#E53E3E' },
-    { name: 'Black', color: '#1A202C' },
+    { name: 'Blue', color: '#3182CE', images: [] },
+    { name: 'White', color: '#FFFFFF', images: [] },
+    { name: 'Red', color: '#E53E3E', images: [] },
+    { name: 'Black', color: '#1A202C', images: [] },
 ];
 
 const FEATURES = [
@@ -40,17 +41,98 @@ const FEATURES = [
     '6 Airbags Standard',
 ];
 
+import apiClient from '../api/apiClient';
+const getMarketInventoryById = (id: number) => apiClient.get(`/market-inventory/${id}`);
+import { MarketInventory } from '../types/market';
+import { Car } from '../constants/cars';
+
+// ... (existing imports)
+
 export default function VehicleSpecScreen({ navigation, route }: { navigation: any; route: any }) {
     const { vehicle: initialVehicle, id } = route.params;
-    const vehicle = initialVehicle || BROWSE_CARS.find(c => c.id === id);
+    const [vehicle, setVehicle] = useState<Car | undefined>(initialVehicle || BROWSE_CARS.find(c => c.id === id));
+    const [isLoading, setIsLoading] = useState<boolean>(!initialVehicle && !!id);
 
     const insets = useSafeAreaInsets();
     const { wishlist, toggleWishlist, addToHistory } = useApp();
     const flatListRef = React.useRef<FlatList>(null);
 
-    // Fallback to static colors if vehicle doesn't have custom ones
-    const availableColors = vehicle.colorOptions || COLORS_DATA;
-    const [selectedColor, setSelectedColor] = useState(availableColors[0].name);
+    useEffect(() => {
+        const loadVehicleDetails = async () => {
+            // If we already have a vehicle passed via params, we might still want to fetch details 
+            // to get the latest price/status/specs, but for now let's rely on params if present
+            // OR fetch if we only have an ID.
+            // given the MarketScreen passes the mapped object, initialVehicle is likely populated. 
+            // However, for deep linking (id only) or reliability, fetching by ID is good.
+
+            if (id) {
+                setIsLoading(true);
+                try {
+                    const response = await getMarketInventoryById(Number(id));
+                    const item: MarketInventory = response.data;
+
+                    // Helper to map color name to hex if missing
+                    const getColorHex = (name: string, providedHex?: string) => {
+                        if (providedHex) return providedHex;
+                        const colors: { [key: string]: string } = {
+                            'Red': '#EF4444', 'Blue': '#3B82F6', 'Black': '#171717', 'White': '#FFFFFF',
+                            'Silver': '#9CA3AF', 'Grey': '#4B5563', 'Yellow': '#EAB308', 'Green': '#22C55E'
+                        };
+                        return colors[name] || '#000000';
+                    };
+
+                    const mainImage = (item.imageUrl && item.imageUrl !== 'string')
+                        ? item.imageUrl
+                        : (item.colors?.find(c => c.images?.length > 0)?.images?.[0]?.imageUrl || 'https://images.unsplash.com/photo-1542362567-b05500269774');
+
+                    // Map API data to UI Car interface (Same mapping logic as MarketScreen)
+                    const mappedCar: Car = {
+                        id: item.id.toString(),
+                        brand: item.model.brand.name,
+                        model: item.vehicleName || item.model.name,
+                        year: item.year.toString(),
+                        price: `₹${item.priceNumeric >= 100 ? (item.priceNumeric / 100).toFixed(2) + ' Cr' : item.priceNumeric + ' Lakh'}`,
+                        priceNumeric: item.priceNumeric,
+                        emi: item.emiDisplay,
+                        image: mainImage,
+                        category: item.category?.name,
+                        type: item.vehicleType.name.toUpperCase() === 'BIKE' ? 'BIKE' : 'CAR',
+                        status: item.status === 'new' ? 'new' : item.status === 'upcoming' ? 'upcoming' : undefined,
+                        specs: {
+                            power: `${item.powerHp} HP`,
+                            engine: `${item.engineCc} cc`,
+                            topSpeed: `${item.topSpeedKmh} km/h`,
+                            transmission: item.transmissionType,
+                            ...(item.specifications ? JSON.parse(item.specifications) : {})
+                        },
+                        colorOptions: item.colors?.map(c => ({
+                            name: c.colorName,
+                            color: getColorHex(c.colorName, c.hexCode),
+                            images: c.images?.map(img => img.imageUrl) || []
+                        }))
+                    };
+                    setVehicle(mappedCar);
+                } catch (error) {
+                    console.error('Failed to load vehicle details:', error);
+                    // Fallback to initialVehicle if available, otherwise stay undefined to show error
+                } finally {
+                    setIsLoading(false);
+                }
+            }
+        };
+
+        loadVehicleDetails();
+    }, [id]);
+
+    useEffect(() => {
+        if (vehicle?.id) {
+            addToHistory(vehicle.id);
+        }
+    }, [vehicle?.id]);
+
+    // Update derived states when vehicle changes
+    const availableColors = vehicle?.colorOptions || COLORS_DATA;
+    const [selectedColor, setSelectedColor] = useState(availableColors[0]?.name || 'Default');
     const [activeImageIndex, setActiveImageIndex] = useState(0);
     const [isViewerVisible, setIsViewerVisible] = useState(false);
 
@@ -58,13 +140,15 @@ export default function VehicleSpecScreen({ navigation, route }: { navigation: a
     const selectedColorData = availableColors.find(c => c.name === selectedColor);
     const currentImages = (selectedColorData?.images && selectedColorData.images.length > 0)
         ? selectedColorData.images
-        : [vehicle.image, vehicle.image, vehicle.image]; // Mock 3 images if only 1 available
+        : (vehicle?.image ? [vehicle.image] : ['https://images.unsplash.com/photo-1542362567-b05500269774']);
 
-    useEffect(() => {
-        if (vehicle?.id) {
-            addToHistory(vehicle.id);
-        }
-    }, [vehicle?.id]);
+    if (isLoading) {
+        return (
+            <View style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
+                <ActivityIndicator size="large" color={COLORS.primary} />
+            </View>
+        );
+    }
 
     if (!vehicle) {
         return (
@@ -187,9 +271,9 @@ export default function VehicleSpecScreen({ navigation, route }: { navigation: a
 
                             {/* Bottom Bar Content Over Image */}
                             <View style={styles.imageBottomContent}>
-                                <View>
-                                    <Text style={styles.brandTitleOverlay}>{vehicle.brand}</Text>
-                                    <Text style={styles.modelTitleOverlay}>{vehicle.model} • {vehicle.year}</Text>
+                                <View style={{ flex: 1, marginRight: 10 }}>
+                                    <Text style={styles.brandTitleOverlay} numberOfLines={1}>{vehicle.brand}</Text>
+                                    <Text style={styles.modelTitleOverlay} numberOfLines={1}>{vehicle.model} • {vehicle.year}</Text>
                                 </View>
                                 <View style={styles.fullScreenBadge}>
                                     <Ionicons name="expand-outline" size={16} color={COLORS.white} />
@@ -253,7 +337,7 @@ export default function VehicleSpecScreen({ navigation, route }: { navigation: a
                             </View>
                             <View style={styles.specTextContent}>
                                 <Text style={styles.specLabel} numberOfLines={1}>Power</Text>
-                                <Text style={styles.specValue} numberOfLines={1} adjustsFontSizeToFit>{vehicle.specs.power}</Text>
+                                <Text style={styles.specValue} numberOfLines={1} adjustsFontSizeToFit>{vehicle.specs?.power || 'N/A'}</Text>
                             </View>
                         </View>
                         <View style={styles.specItem}>
@@ -262,7 +346,7 @@ export default function VehicleSpecScreen({ navigation, route }: { navigation: a
                             </View>
                             <View style={styles.specTextContent}>
                                 <Text style={styles.specLabel} numberOfLines={1}>Engine</Text>
-                                <Text style={styles.specValue} numberOfLines={1} adjustsFontSizeToFit>{vehicle.specs.engine}</Text>
+                                <Text style={styles.specValue} numberOfLines={1} adjustsFontSizeToFit>{vehicle.specs?.engine || 'N/A'}</Text>
                             </View>
                         </View>
                         <View style={styles.specItem}>
@@ -271,7 +355,7 @@ export default function VehicleSpecScreen({ navigation, route }: { navigation: a
                             </View>
                             <View style={styles.specTextContent}>
                                 <Text style={styles.specLabel} numberOfLines={1}>Top Speed</Text>
-                                <Text style={styles.specValue} numberOfLines={1} adjustsFontSizeToFit>{vehicle.specs.topSpeed}</Text>
+                                <Text style={styles.specValue} numberOfLines={1} adjustsFontSizeToFit>{vehicle.specs?.topSpeed || 'N/A'}</Text>
                             </View>
                         </View>
                         <View style={styles.specItem}>
@@ -296,7 +380,10 @@ export default function VehicleSpecScreen({ navigation, route }: { navigation: a
                                 onPress={() => {
                                     setSelectedColor(color.name);
                                     setActiveImageIndex(0);
-                                    flatListRef.current?.scrollToIndex({ index: 0, animated: true });
+                                    // Only scroll if there are images to scroll to
+                                    if (color.images && color.images.length > 0) {
+                                        flatListRef.current?.scrollToIndex({ index: 0, animated: true });
+                                    }
                                 }}
                                 style={[
                                     styles.colorOutline,

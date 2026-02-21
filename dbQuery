@@ -369,7 +369,8 @@ CREATE TABLE `market_inventory` (
   `fuel_type_id` int NOT NULL,
   `year` int NOT NULL,
   `image_url` varchar(500) DEFAULT NULL,
-  `status` varchar(255) NOT NULL,
+  `status` enum('NORMAL','SOLD_OUT','DRAFT','NEW','UPCOMING','TRENDING') NOT NULL DEFAULT 'NORMAL',
+  `active_status` tinyint(1) DEFAULT '1',
   `category_id` int DEFAULT NULL,
   `specifications` json DEFAULT NULL,
   `emi_display` varchar(50) DEFAULT NULL,
@@ -393,7 +394,7 @@ CREATE TABLE `market_inventory` (
   CONSTRAINT `fk_inventory_model` FOREIGN KEY (`model_id`) REFERENCES `models` (`id`) ON DELETE CASCADE,
   CONSTRAINT `fk_inventory_vehicle_type` FOREIGN KEY (`vehicle_type_id`) REFERENCES `vehicle_types` (`id`) ON DELETE CASCADE,
   CONSTRAINT `fk_market_inventory_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`)
-) ENGINE=InnoDB AUTO_INCREMENT=4 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=10 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 
 --vehicle_variant_colors
@@ -417,7 +418,7 @@ CREATE TABLE `vehicle_color_images` (
   `id` int NOT NULL AUTO_INCREMENT,
   `vehicle_color_id` int NOT NULL,
   `image_url` varchar(500) NOT NULL,
-  `image_type` enum('FRONT','BACK','SIDE','INTERIOR','ENGINE','OTHER') DEFAULT 'OTHER',
+  `image_type` enum('FRONT','REAR','SIDE_LEFT','SIDE_RIGHT','INTERIOR','ENGINE') DEFAULT 'FRONT',
   `is_primary` tinyint(1) DEFAULT '0',
   `sort_order` int DEFAULT '0',
   `active_status` tinyint(1) DEFAULT '1',
@@ -426,7 +427,7 @@ CREATE TABLE `vehicle_color_images` (
   PRIMARY KEY (`id`),
   KEY `vehicle_color_id` (`vehicle_color_id`),
   CONSTRAINT `vehicle_color_images_ibfk_1` FOREIGN KEY (`vehicle_color_id`) REFERENCES `vehicle_colors` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=17 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 
 

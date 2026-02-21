@@ -6,7 +6,6 @@ import {
     TouchableOpacity,
     StyleSheet,
     TextInput,
-    Alert,
     Keyboard,
     ToastAndroid,
     ActivityIndicator,
@@ -84,22 +83,30 @@ export default function AddFuelScreen({ navigation, route }: { navigation: any; 
 
     const handleSubmit = async () => {
         if (!selectedVehicleId) {
-            Alert.alert('Error', 'Please select a vehicle');
+            if (Platform.OS === 'android') {
+                ToastAndroid.show('Please select a vehicle', ToastAndroid.SHORT);
+            }
             return;
         }
         const odo = parseFloat(odometer.replace(/,/g, ''));
         if (!odometer || isNaN(odo) || odo <= 0) {
-            Alert.alert('Error', 'Please enter a valid odometer reading');
+            if (Platform.OS === 'android') {
+                ToastAndroid.show('Please enter a valid odometer reading', ToastAndroid.SHORT);
+            }
             return;
         }
         const fuelLiters = parseFloat(liters.replace(/,/g, ''));
         if (!liters || isNaN(fuelLiters) || fuelLiters <= 0) {
-            Alert.alert('Error', 'Please enter valid cost and price to calculate liters');
+            if (Platform.OS === 'android') {
+                ToastAndroid.show('Please enter valid cost and price', ToastAndroid.SHORT);
+            }
             return;
         }
         const price = parseFloat(pricePerLiter.replace(/,/g, ''));
         if (!pricePerLiter || isNaN(price) || price <= 0) {
-            Alert.alert('Error', 'Please enter a valid price per liter');
+            if (Platform.OS === 'android') {
+                ToastAndroid.show('Please enter a valid price per liter', ToastAndroid.SHORT);
+            }
             return;
         }
 
@@ -115,6 +122,7 @@ export default function AddFuelScreen({ navigation, route }: { navigation: any; 
                 isFullTank: isFullTank,
             };
 
+            console.log("Fuel payload", payload)
             let response;
             if (isEdit) {
                 response = await apiClient.put(`/fuel-logs/${fuelLogToEdit.id}`, payload);
@@ -142,7 +150,9 @@ export default function AddFuelScreen({ navigation, route }: { navigation: any; 
             }
         } catch (error) {
             console.error('Error saving fuel log:', error);
-            Alert.alert('Error', 'Failed to save fuel log. Please try again.');
+            if (Platform.OS === 'android') {
+                ToastAndroid.show('Failed to save fuel log', ToastAndroid.SHORT);
+            }
         } finally {
             setIsSaving(false);
         }

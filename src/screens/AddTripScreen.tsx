@@ -6,7 +6,6 @@ import {
     ScrollView,
     TouchableOpacity,
     TextInput,
-    Alert,
     Keyboard,
     KeyboardAvoidingView,
     Platform,
@@ -54,20 +53,28 @@ export default function AddTripScreen({ navigation, route }: { navigation: any, 
 
     const handleSubmit = async () => {
         if (!selectedVehicleId) {
-            Alert.alert('Error', 'Please select a vehicle');
+            if (Platform.OS === 'android') {
+                ToastAndroid.show('Please select a vehicle', ToastAndroid.SHORT);
+            }
             return;
         }
         if (!title.trim()) {
-            Alert.alert('Error', 'Please enter a trip title');
+            if (Platform.OS === 'android') {
+                ToastAndroid.show('Please enter a trip title', ToastAndroid.SHORT);
+            }
             return;
         }
         const dist = parseFloat(distance.replace(/,/g, ''));
         if (!distance || isNaN(dist) || dist <= 0) {
-            Alert.alert('Error', 'Please enter a valid distance');
+            if (Platform.OS === 'android') {
+                ToastAndroid.show('Please enter a valid distance', ToastAndroid.SHORT);
+            }
             return;
         }
         if (!duration.trim()) {
-            Alert.alert('Error', 'Please enter trip duration');
+            if (Platform.OS === 'android') {
+                ToastAndroid.show('Please enter trip duration', ToastAndroid.SHORT);
+            }
             return;
         }
 
@@ -101,7 +108,9 @@ export default function AddTripScreen({ navigation, route }: { navigation: any, 
             }
         } catch (error) {
             console.error('Error saving trip:', error);
-            Alert.alert('Error', 'Failed to save trip. Please try again.');
+            if (Platform.OS === 'android') {
+                ToastAndroid.show('Failed to save trip', ToastAndroid.SHORT);
+            }
         } finally {
             setIsSaving(false);
         }

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import {
     View,
     Text,
@@ -7,21 +7,94 @@ import {
     TouchableOpacity,
     Image,
     Dimensions,
+    ActivityIndicator,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { COLORS, SHADOWS } from '../constants/theme';
 import { useApp } from '../context/AppContext';
-import { BROWSE_CARS, Car } from '../constants/cars';
+import { Car } from '../constants/cars';
 import { StatusBar } from 'expo-status-bar';
+import apiClient from '../api/apiClient';
+const getWishlist = (userId: string) => apiClient.get(`/wishlist/user/${userId}`);
+import { useAuth } from '../context/AuthContext';
+import { MarketInventory } from '../types/market';
 
 const { width } = Dimensions.get('window');
 
 export default function WishlistScreen({ navigation }: { navigation: any }) {
     const insets = useSafeAreaInsets();
     const { wishlist, toggleWishlist } = useApp();
+    const { user } = useAuth();
 
-    const wishlistedCars = BROWSE_CARS.filter(car => wishlist.includes(car.id));
+    const [wishlistedCars, setWishlistedCars] = useState<Car[]>([]);
+    const [isLoading, setIsLoading] = useState(true);
+
+    useEffect(() => {
+        loadWishlistData();
+    }, [wishlist.length]); // Reload if count changes (toggle happened)
+
+    const loadWishlistData = async () => {
+        if (!user?.id) return;
+        setIsLoading(true);
+        try {
+            const response = await getWishlist(user.id);
+            const data = response.data || [];
+            // data is List<WishlistEntity> -> { id, user, marketInventory }
+
+            const mappedCars: Car[] = data.map((entry: any) => {
+                const item: MarketInventory = entry.marketInventory;
+
+                const getColorHex = (name: string, providedHex?: string) => {
+                    if (providedHex) return providedHex;
+                    const colors: { [key: string]: string } = {
+                        'Red': '#EF4444', 'Blue': '#3B82F6', 'Black': '#171717', 'White': '#FFFFFF',
+                        'Silver': '#9CA3AF', 'Grey': '#4B5563', 'Yellow': '#EAB308', 'Green': '#22C55E'
+                    };
+                    return colors[name] || '#000000';
+                };
+
+                const mainImage = (item.imageUrl && item.imageUrl !== 'string')
+                    ? item.imageUrl
+                    : (item.colors?.find((c: any) => c.images?.length > 0)?.images?.[0]?.imageUrl || 'https://images.unsplash.com/photo-1542362567-b05500269774');
+
+                return {
+                    id: item.id.toString(),
+                    brand: item.model.brand.name,
+                    model: item.vehicleName || item.model.name,
+                    year: item.year.toString(),
+                    price: `₹${item.priceNumeric >= 100 ? (item.priceNumeric / 100).toFixed(2) + ' Cr' : item.priceNumeric + ' Lakh'}`,
+                    priceNumeric: item.priceNumeric,
+                    emi: item.emiDisplay,
+                    image: mainImage,
+                    category: item.category?.name,
+                    type: item.vehicleType.name.toUpperCase() === 'BIKE' ? 'BIKE' : 'CAR',
+                    status: (item.status && (item.status.toLowerCase() === 'new' || item.status.toLowerCase() === 'new_arrival')) ? 'new'
+                        : (item.status && item.status.toLowerCase() === 'upcoming') ? 'upcoming'
+                            : (item.status && item.status.toLowerCase() === 'trending') ? 'trending'
+                                : undefined,
+                    specs: {
+                        power: `${item.powerHp} HP`,
+                        engine: `${item.engineCc} cc`,
+                        topSpeed: `${item.topSpeedKmh} km/h`,
+                        transmission: item.transmissionType,
+                        ...(item.specifications ? JSON.parse(item.specifications) : {})
+                    },
+                    colorOptions: item.colors?.map((c: any) => ({
+                        name: c.colorName,
+                        color: getColorHex(c.colorName, c.hexCode),
+                        images: c.images?.map((img: any) => img.imageUrl) || []
+                    }))
+                };
+            });
+
+            setWishlistedCars(mappedCars);
+        } catch (error) {
+            console.error('Error loading wishlist data:', error);
+        } finally {
+            setIsLoading(false);
+        }
+    };
 
     const renderWishlistItem = ({ item }: { item: Car }) => (
         <TouchableOpacity
@@ -58,7 +131,11 @@ export default function WishlistScreen({ navigation }: { navigation: any }) {
         <View style={styles.container}>
             <StatusBar style="light" />
 
-            {wishlistedCars.length > 0 ? (
+            {isLoading ? (
+                <View style={styles.emptyContainer}>
+                    <ActivityIndicator size="large" color={COLORS.primary} />
+                </View>
+            ) : wishlistedCars.length > 0 ? (
                 <FlatList
                     data={wishlistedCars}
                     renderItem={renderWishlistItem}

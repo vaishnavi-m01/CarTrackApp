@@ -17,11 +17,14 @@ import * as ImagePicker from 'expo-image-picker';
 import { COLORS, SIZES, SHADOWS } from '../constants/theme';
 import { useApp } from '../context/AppContext';
 import { useAuth } from '../context/AuthContext';
+import apiClient from '../api/apiClient';
+import { CommunityPost } from '../types/Community';
 import { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
 import { CompositeNavigationProp } from '@react-navigation/native';
 import { StackNavigationProp } from '@react-navigation/stack';
 import { RootTabParamList, RootStackParamList } from '../navigation/MainNavigator';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import UsersBottomSheet from '../components/UsersBottomSheet';
 
 const { width } = Dimensions.get('window');
 
@@ -35,11 +38,18 @@ interface ProfileScreenProps {
 }
 
 export default function ProfileScreen({ navigation }: ProfileScreenProps) {
-    const { vehicles, communityPosts, wishlist } = useApp();
+    const { vehicles, wishlist, fetchWishlist } = useApp();
     const { user } = useAuth();
     const insets = useSafeAreaInsets();
     const [avatarImage, setAvatarImage] = useState<string | null>(null);
+    const [usersSheetVisible, setUsersSheetVisible] = useState(false);
+    const [usersSheetType, setUsersSheetType] = useState<'followers' | 'following'>('followers');
     const [activeTab, setActiveTab] = useState<'posts' | 'saved'>('posts');
+    const [userPosts, setUserPosts] = useState<CommunityPost[]>([]);
+    const [savedPosts, setSavedPosts] = useState<CommunityPost[]>([]);
+    const [userProfile, setUserProfile] = useState<any>(null);
+    const [isLoading, setIsLoading] = useState(true);
+    const [isProfileLoading, setIsProfileLoading] = useState(false);
 
     const pickImage = async () => {
         const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -60,9 +70,93 @@ export default function ProfileScreen({ navigation }: ProfileScreenProps) {
         }
     };
 
-    // Data derived for tabs
-    const userPosts = communityPosts.filter(p => p.userId === user?.id && p.media && p.media.length > 0);
-    const savedPosts = communityPosts.filter(p => wishlist.includes(p.id));
+    React.useEffect(() => {
+        if (user) {
+            fetchUserProfile();
+            fetchUserPosts();
+            fetchSavedPosts();
+        }
+    }, [user, activeTab]);
+
+    const fetchUserProfile = async () => {
+        if (!user) return;
+        setIsProfileLoading(true);
+        try {
+            const response = await apiClient.get(`/users/${user.id}`);
+            setUserProfile(response.data);
+        } catch (error) {
+            console.error('Error fetching user profile:', error);
+        } finally {
+            setIsProfileLoading(false);
+        }
+    };
+
+    const fetchUserPosts = async () => {
+        if (!user) return;
+        try {
+            const response = await apiClient.get(`/post?userId=${user.id}&viewerId=${user.id}`);
+            const data = response.data || [];
+            setUserPosts(mapPosts(data));
+        } catch (error) {
+            console.error('Error fetching user posts:', error);
+        }
+    };
+
+    const fetchSavedPosts = async () => {
+        if (!user) return;
+        try {
+            const response = await apiClient.get(`/post/saved?userId=${user.id}`);
+            const data = response.data || [];
+            setSavedPosts(mapPosts(data));
+        } catch (error) {
+            console.error('Error fetching saved posts:', error);
+        }
+    };
+
+    const mapPosts = (posts: any[]): CommunityPost[] => {
+        return posts.map(dto => {
+            const post = dto.post || dto; // Handle both direct entities and DTOs if mixed
+            return {
+                id: post.id,
+                userId: post.userId,
+                userName: post.user?.username || `User ${post.userId}`,
+                userAvatar: post.user?.profilePicUrl,
+                user: post.user,
+                content: post.content,
+                media: (post.media || []).map((m: any) => ({
+                    id: m.id,
+                    postId: m.postId,
+                    mediaUrl: m.mediaUrl,
+                    type: m.type || 'image',
+                    aspectRatio: m.aspectRatio || 1
+                })),
+                createdAt: post.createdAt,
+                likes: post.likesCount || 0,
+                likesCount: post.likesCount,
+                likedByUser: dto.likedByUser || false,
+                isSaved: dto.isSaved || dto.saved || false,
+                comments: (post.comments || []).map((c: any) => ({
+                    id: c.id,
+                    userId: c.userId,
+                    userName: c.userName || 'Unknown',
+                    content: c.content,
+                    timestamp: c.createdAt,
+                    likes: 0
+                })),
+                commentCount: post.commentsCount || 0,
+                commentsCount: post.commentsCount,
+                views: post.viewsCount || 0,
+                viewsCount: post.viewsCount,
+                savesCount: post.savesCount,
+                location: post.location,
+                feeling: post.feeling,
+                allowComments: post.allowComments ?? true,
+                isPublic: post.isPublic ?? true,
+                vehicleId: post.vehicleId,
+                tags: post.tags || []
+            };
+        });
+    };
 
     const displayPosts = activeTab === 'posts' ? userPosts : savedPosts;
 
@@ -107,7 +201,7 @@ export default function ProfileScreen({ navigation }: ProfileScreenProps) {
                         activeOpacity={0.8}
                     >
                         <Image
-                            source={{ uri: avatarImage || 'https://images.unsplash.com/photo-1599566150163-29194dcaad36?w=200' }}
+                            source={{ uri: avatarImage || userProfile?.profilePicUrl || user?.profilePicUrl || 'https://images.unsplash.com/photo-1599566150163-29194dcaad36?w=200' }}
                             style={styles.mainAvatar}
                         />
                         <View style={styles.cameraIconBadgeProminent}>
@@ -115,9 +209,18 @@ export default function ProfileScreen({ navigation }: ProfileScreenProps) {
                         </View>
                     </TouchableOpacity>
 
-                    <Text style={styles.nameText}>{user?.name || 'Alex "Turbo" Rivera'}</Text>
-                    <Text style={styles.handleText}>@{user?.name ? user.name.toLowerCase().replace(/\s+/g, '_') : 'alex_911_turbo'}</Text>
-                    <Text style={styles.bioText}>Automotive Enthusiast | Track Day Junkie | Miami, FL</Text>
+                    <Text style={styles.nameText}>{userProfile?.name || userProfile?.username || user?.name || user?.username || 'User'}</Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 2 }}>
+                        <Text style={[styles.handleText, { marginBottom: 0 }]}>@{userProfile?.username || user?.username || 'user'}</Text>
+                        {userProfile?.isPrivate && (
+                            <View style={{ flexDirection: 'row', alignItems: 'center', marginLeft: 8, backgroundColor: 'rgba(0,0,0,0.05)', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 8, borderWidth: 1, borderColor: 'rgba(0,0,0,0.1)' }}>
+                                <Ionicons name="lock-closed" size={10} color={COLORS.textLight} />
+                                <Text style={{ fontSize: 9, color: COLORS.textLight, marginLeft: 3, fontWeight: 'bold' }}>PRIVATE</Text>
+                            </View>
+                        )}
+                    </View>
+                    {userProfile?.email && <Text style={styles.emailText}>{userProfile.email}</Text>}
+                    <Text style={styles.bioText}>{userProfile?.bio || 'Automotive Enthusiast | Track Day Junkie'}</Text>
 
                     {/* Edit Profile Action */}
                     <TouchableOpacity
@@ -130,17 +233,34 @@ export default function ProfileScreen({ navigation }: ProfileScreenProps) {
                     {/* Stats Section (Elegant Bordered) */}
                     <View style={styles.elegantStatsCardNeat}>
                         <View style={styles.statBox}>
-                            <Text style={styles.statValueText}>124</Text>
+                            <Text style={styles.statValueText}>{userPosts.length}</Text>
                             <Text style={styles.statLabelText}>POSTS</Text>
                         </View>
                         <View style={styles.statDividerNeat} />
-                        <View style={styles.statBox}>
-                            <Text style={styles.statValueText}>2.5k</Text>
+                        <TouchableOpacity
+                            style={styles.statBox}
+                            onPress={() => {
+                                setUsersSheetType('followers');
+                                setUsersSheetVisible(true);
+                            }}
+                        >
+                            <Text style={styles.statValueText}>{userProfile?.followersCount || 0}</Text>
                             <Text style={styles.statLabelText}>FOLLOWERS</Text>
-                        </View>
+                        </TouchableOpacity>
+                        <View style={styles.statDividerNeat} />
+                        <TouchableOpacity
+                            style={styles.statBox}
+                            onPress={() => {
+                                setUsersSheetType('following');
+                                setUsersSheetVisible(true);
+                            }}
+                        >
+                            <Text style={styles.statValueText}>{userProfile?.followingCount || 0}</Text>
+                            <Text style={styles.statLabelText}>FOLLOWING</Text>
+                        </TouchableOpacity>
                         <View style={styles.statDividerNeat} />
                         <View style={styles.statBox}>
-                            <Text style={styles.statValueText}>{vehicles.length}</Text>
+                            <Text style={styles.statValueText}>{userProfile?.garageCount || vehicles.length}</Text>
                             <Text style={styles.statLabelText}>GARAGE</Text>
                         </View>
                     </View>
@@ -206,18 +326,58 @@ export default function ProfileScreen({ navigation }: ProfileScreenProps) {
                 </View>
 
                 <View style={styles.postsGrid}>
-                    {displayPosts.length > 0 ? displayPosts.map((post, index) => (
-                        <TouchableOpacity
-                            key={post.id}
-                            style={styles.gridItem}
-                            onPress={() => navigation.navigate('PostDetail', {
-                                initialPost: post,
-                                allPosts: displayPosts
-                            })}
-                        >
-                            <Image source={{ uri: post.media[0].uri }} style={styles.gridImage} />
-                        </TouchableOpacity>
-                    )) : (
+                    {displayPosts.length > 0 ? displayPosts.map((post, index) => {
+                        const hasMedia = post.media && post.media.length > 0;
+                        const firstMedia = hasMedia ? post.media[0] : null;
+
+                        return (
+                            <TouchableOpacity
+                                key={post.id}
+                                style={styles.gridItem}
+                                onPress={() => navigation.navigate('PostDetail', {
+                                    initialPost: post,
+                                    allPosts: displayPosts
+                                })}
+                            >
+                                {!hasMedia ? (
+                                    <LinearGradient
+                                        colors={[COLORS.primary, '#8E2DE2']}
+                                        style={styles.premiumTextCard}
+                                        start={{ x: 0, y: 0 }}
+                                        end={{ x: 1, y: 1 }}
+                                    >
+                                        <Ionicons name="chatbox-ellipses" size={24} color="rgba(255,255,255,0.4)" style={styles.cardIcon} />
+                                        <Text style={styles.premiumTextPreview} numberOfLines={4}>
+                                            {post.content}
+                                        </Text>
+                                    </LinearGradient>
+                                ) : firstMedia?.type === 'video' ? (
+                                    <View style={styles.premiumVideoCard}>
+                                        <Image
+                                            source={{ uri: firstMedia.mediaUrl }}
+                                            style={styles.gridImage}
+                                            resizeMode="cover"
+                                        />
+                                        <LinearGradient
+                                            colors={['transparent', 'rgba(0,0,0,0.6)']}
+                                            style={styles.videoOverlayGradient}
+                                        >
+                                            <View style={styles.reelsBadge}>
+                                                <Ionicons name="play" size={12} color={COLORS.white} />
+                                                <Text style={styles.reelsBadgeText}>REELS</Text>
+                                            </View>
+                                            <Ionicons name="play-circle" size={32} color="rgba(255,255,255,0.8)" style={styles.videoPlayIcon} />
+                                        </LinearGradient>
+                                    </View>
+                                ) : (
+                                    <Image
+                                        source={{ uri: firstMedia?.mediaUrl }}
+                                        style={styles.gridImage}
+                                    />
+                                )}
+                            </TouchableOpacity>
+                        );
+                    }) : (
                         <View style={styles.emptyPosts}>
                             <Ionicons
                                 name={activeTab === 'posts' ? "images-outline" : "bookmark-outline"}
@@ -234,8 +394,12 @@ export default function ProfileScreen({ navigation }: ProfileScreenProps) {
                 <View style={{ height: 60 }} />
             </ScrollView>
 
-
-
+            <UsersBottomSheet
+                visible={usersSheetVisible}
+                onClose={() => setUsersSheetVisible(false)}
+                userId={user?.id || null}
+                type={usersSheetType}
+            />
         </View>
     );
 }
@@ -340,6 +504,11 @@ const styles = StyleSheet.create({
         fontSize: 13,
         color: COLORS.primary,
         fontWeight: '700',
+        marginBottom: 2,
+    },
+    emailText: {
+        fontSize: 12,
+        color: COLORS.textLight,
         marginBottom: 8,
     },
     bioText: {
@@ -521,6 +690,63 @@ const styles = StyleSheet.create({
         width: '100%',
         height: '100%',
     },
+    premiumTextCard: {
+        width: '100%',
+        height: '100%',
+        padding: 12,
+        justifyContent: 'center',
+        alignItems: 'center',
+        borderRadius: 12,
+    },
+    premiumTextPreview: {
+        fontSize: 11,
+        color: COLORS.white,
+        fontWeight: '700',
+        textAlign: 'center',
+        lineHeight: 14,
+    },
+    cardIcon: {
+        position: 'absolute',
+        top: 8,
+        right: 8,
+    },
+    premiumVideoCard: {
+        width: '100%',
+        height: '100%',
+        backgroundColor: '#000',
+        borderRadius: 12,
+        overflow: 'hidden',
+    },
+    videoOverlayGradient: {
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    videoPlayIcon: {
+        opacity: 0.9,
+    },
+    reelsBadge: {
+        position: 'absolute',
+        bottom: 8,
+        left: 8,
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: 'rgba(0,0,0,0.5)',
+        paddingHorizontal: 6,
+        paddingVertical: 2,
+        borderRadius: 4,
+        gap: 4,
+    },
+    reelsBadgeText: {
+        color: COLORS.white,
+        fontSize: 8,
+        fontWeight: 'bold',
+        letterSpacing: 0.5,
+    },
     emptyPosts: {
         width: '100%',
         paddingVertical: 40,
@@ -546,10 +772,5 @@ const styles = StyleSheet.create({
         borderRadius: 30,
         justifyContent: 'center',
         alignItems: 'center',
-    },
-    statDividerNeat: {
-        width: 1,
-        height: '65%',
-        backgroundColor: '#E8EEF7',
     },
 });

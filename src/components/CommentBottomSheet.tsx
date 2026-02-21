@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
     View,
     Text,
@@ -9,6 +9,11 @@ import {
     ScrollView,
     KeyboardAvoidingView,
     Platform,
+    ActivityIndicator,
+    Image,
+    Dimensions,
+    Animated,
+    PanResponder,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { COLORS, SIZES, SHADOWS } from '../constants/theme';
@@ -17,23 +22,74 @@ import { Comment } from '../types/Community';
 interface CommentBottomSheetProps {
     visible: boolean;
     onClose: () => void;
-    comments: Comment[];
+    comments: any[];
+    isLoading?: boolean;
     onAddComment: (text: string) => void;
+    allowComments?: boolean;
 }
+
+const { height: SCREEN_HEIGHT } = Dimensions.get('window');
+const SHEET_HEIGHT = SCREEN_HEIGHT * 0.7;
 
 export default function CommentBottomSheet({
     visible,
     onClose,
     comments,
+    isLoading = false,
     onAddComment,
+    allowComments = true,
 }: CommentBottomSheetProps) {
     const [commentText, setCommentText] = useState('');
+    const panY = useRef(new Animated.Value(SCREEN_HEIGHT)).current;
+
+    const resetBottomSheet = Animated.timing(panY, {
+        toValue: 0,
+        duration: 300,
+        useNativeDriver: true,
+    });
+
+    const closeBottomSheet = Animated.timing(panY, {
+        toValue: SCREEN_HEIGHT,
+        duration: 300,
+        useNativeDriver: true,
+    });
+
+    const panResponder = useRef(
+        PanResponder.create({
+            onStartShouldSetPanResponder: () => true,
+            onMoveShouldSetPanResponder: () => true,
+            onPanResponderMove: (e, gestureState) => {
+                if (gestureState.dy > 0) {
+                    panY.setValue(gestureState.dy);
+                }
+            },
+            onPanResponderRelease: (e, gestureState) => {
+                if (gestureState.dy > SCREEN_HEIGHT * 0.2) {
+                    closeBottomSheet.start(onClose);
+                } else {
+                    resetBottomSheet.start();
+                }
+            },
+        })
+    ).current;
+
+    useEffect(() => {
+        if (visible) {
+            resetBottomSheet.start();
+        } else {
+            panY.setValue(SCREEN_HEIGHT);
+        }
+    }, [visible]);
 
     const handleSubmit = () => {
         if (commentText.trim()) {
             onAddComment(commentText.trim());
             setCommentText('');
         }
+    };
+
+    const handleClose = () => {
+        closeBottomSheet.start(onClose);
     };
 
     const formatTimestamp = (date: Date) => {
@@ -50,30 +106,38 @@ export default function CommentBottomSheet({
         <Modal
             visible={visible}
             transparent
-            animationType="slide"
-            onRequestClose={onClose}
+            animationType="none"
+            onRequestClose={handleClose}
             statusBarTranslucent
         >
             <View style={styles.overlay}>
                 <TouchableOpacity
                     style={styles.overlayTouchable}
                     activeOpacity={1}
-                    onPress={onClose}
+                    onPress={handleClose}
                 />
                 <KeyboardAvoidingView
                     behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-                    style={styles.container}
+                    style={styles.kbView}
+                    keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}
                 >
-                    <View style={styles.sheetContainer}>
-                        {/* Handle Bar */}
-                        <View style={styles.handleBar} />
+                    <Animated.View
+                        style={[
+                            styles.sheetContainer,
+                            { transform: [{ translateY: panY }] }
+                        ]}
+                    >
+                        {/* Draggable Handle */}
+                        <View {...panResponder.panHandlers} style={styles.dragHandleContainer}>
+                            <View style={styles.handleBar} />
+                        </View>
 
                         {/* Header */}
                         <View style={styles.header}>
                             <Text style={styles.title}>
                                 Comments {comments.length > 0 && `(${comments.length})`}
                             </Text>
-                            <TouchableOpacity onPress={onClose}>
+                            <TouchableOpacity onPress={handleClose} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
                                 <Ionicons name="close" size={24} color={COLORS.text} />
                             </TouchableOpacity>
                         </View>
@@ -84,64 +148,91 @@ export default function CommentBottomSheet({
                             contentContainerStyle={styles.commentsListContent}
                             showsVerticalScrollIndicator={false}
                             nestedScrollEnabled
+                            keyboardShouldPersistTaps="handled"
                         >
-                            {comments.length === 0 ? (
+                            {isLoading ? (
+                                <View style={styles.loadingContainer}>
+                                    <ActivityIndicator size="large" color={COLORS.primary} />
+                                    <Text style={styles.loadingText}>Loading comments...</Text>
+                                </View>
+                            ) : comments.length === 0 ? (
                                 <View style={styles.emptyState}>
-                                    <Ionicons name="chatbubble-outline" size={48} color={COLORS.textExtraLight} />
+                                    <View style={styles.emptyIconContainer}>
+                                        <Ionicons name="chatbubble-outline" size={48} color="rgba(0,0,0,0.15)" />
+                                    </View>
                                     <Text style={styles.emptyText}>No comments yet</Text>
-                                    <Text style={styles.emptySubtext}>Be the first to comment!</Text>
+                                    <Text style={styles.emptySubtext}>Be the first to share your thoughts!</Text>
                                 </View>
                             ) : (
-                                comments.map((comment) => (
-                                    <View key={comment.id} style={styles.commentItem}>
-                                        <View style={styles.commentAvatar}>
-                                            <Text style={styles.commentAvatarText}>
-                                                {comment.userName.charAt(0).toUpperCase()}
-                                            </Text>
-                                        </View>
-                                        <View style={styles.commentContent}>
-                                            <View style={styles.commentHeader}>
-                                                <Text style={styles.commentUserName}>{comment.userName}</Text>
-                                                <Text style={styles.commentTime}>
-                                                    {formatTimestamp(comment.timestamp)}
-                                                </Text>
+                                comments.map((comment) => {
+                                    const userName = comment.user?.username || comment.userName || 'Unknown';
+                                    const userAvatar = comment.user?.profilePicUrl || comment.userAvatar;
+                                    const timestamp = comment.createdAt || comment.timestamp;
+
+                                    return (
+                                        <View key={comment.id} style={styles.commentItem}>
+                                            <View style={styles.commentAvatar}>
+                                                {userAvatar ? (
+                                                    <Image source={{ uri: userAvatar }} style={styles.avatarImage} />
+                                                ) : (
+                                                    <Text style={styles.commentAvatarText}>
+                                                        {userName.charAt(0).toUpperCase()}
+                                                    </Text>
+                                                )}
                                             </View>
-                                            <Text style={styles.commentText}>{comment.content}</Text>
+                                            <View style={styles.commentContent}>
+                                                <View style={styles.commentHeader}>
+                                                    <Text style={styles.commentUserName}>{userName}</Text>
+                                                    <Text style={styles.commentTime}>
+                                                        {formatTimestamp(new Date(timestamp))}
+                                                    </Text>
+                                                </View>
+                                                <Text style={styles.commentText}>{comment.content}</Text>
+                                            </View>
                                         </View>
-                                    </View>
-                                ))
+                                    );
+                                })
                             )}
                         </ScrollView>
 
                         {/* Add Comment Input */}
                         <View style={styles.inputContainer}>
-                            <View style={styles.inputWrapper}>
-                                <TextInput
-                                    style={styles.input}
-                                    placeholder="Add a comment..."
-                                    placeholderTextColor={COLORS.textLight}
-                                    value={commentText}
-                                    onChangeText={setCommentText}
-                                    multiline
-                                    maxLength={500}
-                                />
-                                <TouchableOpacity
-                                    style={[
-                                        styles.sendButton,
-                                        !commentText.trim() && styles.sendButtonDisabled,
-                                    ]}
-                                    onPress={handleSubmit}
-                                    disabled={!commentText.trim()}
-                                >
-                                    <Ionicons
-                                        name="send"
-                                        size={20}
-                                        color={commentText.trim() ? COLORS.primary : COLORS.textLight}
+                            {allowComments ? (
+                                <View style={styles.inputWrapper}>
+                                    <TextInput
+                                        style={styles.input}
+                                        placeholder="Add a comment..."
+                                        placeholderTextColor={COLORS.textLight}
+                                        value={commentText}
+                                        onChangeText={setCommentText}
+                                        multiline
+                                        maxLength={500}
                                     />
-                                </TouchableOpacity>
-                            </View>
+                                    <TouchableOpacity
+                                        style={[
+                                            styles.sendButton,
+                                            !commentText.trim() && styles.sendButtonDisabled,
+                                        ]}
+                                        onPress={handleSubmit}
+                                        disabled={!commentText.trim()}
+                                    >
+                                        <Ionicons
+                                            name="send"
+                                            size={20}
+                                            color={commentText.trim() ? COLORS.primary : COLORS.textLight}
+                                        />
+                                    </TouchableOpacity>
+                                </View>
+                            ) : (
+                                <View style={[styles.inputWrapper, { backgroundColor: '#FFF1F2', justifyContent: 'center', paddingVertical: 12, borderStyle: 'dashed', borderWidth: 1, borderColor: '#FDA4AF' }]}>
+                                    <Ionicons name="chatbubble-outline" size={18} color="#E11D48" style={{ marginRight: 8 }} />
+                                    <Text style={{ color: '#E11D48', fontWeight: 'bold', fontSize: 13 }}>
+                                        Comments are turned off for this post
+                                    </Text>
+                                </View>
+                            )}
                         </View>
-                    </View>
+                    </Animated.View>
                 </KeyboardAvoidingView>
             </View>
         </Modal>
@@ -157,33 +248,37 @@ const styles = StyleSheet.create({
         ...StyleSheet.absoluteFillObject,
         backgroundColor: 'rgba(0,0,0,0.5)',
     },
-    container: {
+    kbView: {
+        flex: 1,
         justifyContent: 'flex-end',
     },
     sheetContainer: {
         backgroundColor: COLORS.white,
-        borderTopLeftRadius: 24,
-        borderTopRightRadius: 24,
-        maxHeight: '80%',
+        borderTopLeftRadius: 30,
+        borderTopRightRadius: 30,
+        height: SHEET_HEIGHT,
         paddingBottom: Platform.OS === 'ios' ? 34 : 20,
+        overflow: 'hidden',
+    },
+    dragHandleContainer: {
+        width: '100%',
+        paddingVertical: 12,
+        alignItems: 'center',
     },
     handleBar: {
         width: 40,
-        height: 4,
-        backgroundColor: '#E5E7EB',
-        borderRadius: 2,
-        alignSelf: 'center',
-        marginTop: 12,
-        marginBottom: 8,
+        height: 5,
+        backgroundColor: 'rgba(0,0,0,0.1)',
+        borderRadius: 3,
     },
     header: {
         flexDirection: 'row',
         justifyContent: 'space-between',
         alignItems: 'center',
         paddingHorizontal: 20,
-        paddingVertical: 16,
+        paddingVertical: 10,
         borderBottomWidth: 1,
-        borderBottomColor: '#F3F4F6',
+        borderBottomColor: 'rgba(0,0,0,0.05)',
     },
     title: {
         fontSize: 18,
@@ -191,32 +286,43 @@ const styles = StyleSheet.create({
         color: COLORS.text,
     },
     commentsList: {
-        flexGrow: 0,
-        flexShrink: 1,
+        flex: 1,
     },
     commentsListContent: {
         paddingHorizontal: 20,
+        paddingBottom: 20,
     },
     emptyState: {
         alignItems: 'center',
+        justifyContent: 'center',
         paddingVertical: 60,
+    },
+    emptyIconContainer: {
+        width: 80,
+        height: 80,
+        borderRadius: 40,
+        backgroundColor: 'rgba(0,0,0,0.03)',
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginBottom: 16,
     },
     emptyText: {
         fontSize: 16,
         fontWeight: '600',
-        color: COLORS.textLight,
+        color: COLORS.text,
         marginTop: 12,
     },
     emptySubtext: {
         fontSize: 14,
-        color: COLORS.textExtraLight,
+        color: COLORS.textLight,
         marginTop: 4,
+        textAlign: 'center',
     },
     commentItem: {
         flexDirection: 'row',
         paddingVertical: 16,
         borderBottomWidth: 1,
-        borderBottomColor: '#F9FAFB',
+        borderBottomColor: 'rgba(0,0,0,0.05)',
     },
     commentAvatar: {
         width: 36,
@@ -226,11 +332,26 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
         alignItems: 'center',
         marginRight: 12,
+        overflow: 'hidden',
+    },
+    avatarImage: {
+        width: '100%',
+        height: '100%',
     },
     commentAvatarText: {
         color: COLORS.white,
         fontSize: 14,
         fontWeight: 'bold',
+    },
+    loadingContainer: {
+        paddingVertical: 40,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    loadingText: {
+        marginTop: 12,
+        color: COLORS.textLight,
+        fontSize: 14,
     },
     commentContent: {
         flex: 1,
@@ -257,14 +378,16 @@ const styles = StyleSheet.create({
     },
     inputContainer: {
         paddingHorizontal: 20,
-        paddingTop: 16,
+        paddingTop: 12,
+        paddingBottom: 12,
         borderTopWidth: 1,
-        borderTopColor: '#F3F4F6',
+        borderTopColor: 'rgba(0,0,0,0.05)',
+        backgroundColor: COLORS.white,
     },
     inputWrapper: {
         flexDirection: 'row',
         alignItems: 'flex-end',
-        backgroundColor: '#F9FAFB',
+        backgroundColor: '#F3F4F6',
         borderRadius: 24,
         paddingHorizontal: 16,
         paddingVertical: 8,
@@ -273,19 +396,19 @@ const styles = StyleSheet.create({
         flex: 1,
         fontSize: 14,
         color: COLORS.text,
-        maxHeight: 80,
+        maxHeight: 120, // Increased for better multi-line
         paddingVertical: 8,
     },
     sendButton: {
         width: 36,
         height: 36,
         borderRadius: 18,
-        backgroundColor: '#EFF6FF',
+        backgroundColor: 'rgba(0,0,0,0.05)',
         justifyContent: 'center',
         alignItems: 'center',
         marginLeft: 8,
     },
     sendButtonDisabled: {
-        backgroundColor: '#F3F4F6',
+        backgroundColor: 'rgba(0,0,0,0.02)',
     },
 });

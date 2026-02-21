@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
     View,
     Text,
@@ -14,6 +14,7 @@ import {
     Keyboard,
     TouchableWithoutFeedback,
     Modal,
+    ActivityIndicator,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
@@ -21,15 +22,166 @@ import { COLORS, SIZES, SHADOWS } from '../constants/theme';
 import Header from '../components/Header';
 import { useApp } from '../context/AppContext';
 
-import { BROWSE_CARS, Car } from '../constants/cars';
+import apiClient from '../api/apiClient';
+import { MarketInventory } from '../types/market';
+import { Car } from '../constants/cars';
+
+const getMarketInventory = (params?: any) => apiClient.get('/market-inventory', { params });
+const getVehicleTypes = () => apiClient.get('/vehicle-type');
+const getVehicleCategories = () => apiClient.get('/vehicle-categories');
+const getBrands = () => apiClient.get('/brands');
+const getModels = () => apiClient.get('/models');
 
 export default function MarketScreen({ navigation }: { navigation: any }) {
-    const { recentlyViewed } = useApp();
+    const { recentlyViewed, wishlist, toggleWishlist } = useApp();
     const [selectedCars, setSelectedCars] = useState<string[]>([]);
 
-    const cars = BROWSE_CARS;
+    // State for dynamic data
+    const [cars, setCars] = useState<Car[]>([]);
+    const [isLoading, setIsLoading] = useState(true);
 
-    const categories = ['All', 'Cars', 'Bikes'];
+    // Dynamic Filter Data States
+    const [vehicleTypes, setVehicleTypes] = useState<any[]>([]);
+    const [vehicleCategories, setVehicleCategories] = useState<any[]>([]);
+    const [brands, setBrands] = useState<any[]>([]);
+    const [models, setModels] = useState<any[]>([]);
+    const [filteredModels, setFilteredModels] = useState<any[]>([]);
+
+
+    useEffect(() => {
+        loadFilterData();
+    }, []);
+
+    const loadFilterData = async () => {
+        try {
+            const [typesRes, catsRes, brandsRes, modelsRes] = await Promise.all([
+                getVehicleTypes(),
+                getVehicleCategories(),
+                getBrands(),
+                getModels()
+            ]);
+
+            setVehicleTypes([{ id: 'all', name: 'All' }, ...typesRes.data]);
+            setVehicleCategories([{ id: 'all', name: 'All' }, ...catsRes.data]);
+            setBrands([{ id: 'all', name: 'All' }, ...brandsRes.data]);
+            setModels(modelsRes.data);
+            setFilteredModels(modelsRes.data);
+        } catch (error) {
+            console.error('Failed to load filter data:', error);
+        }
+    };
+
+    const loadMarketInventory = async () => {
+        console.log('--- loadMarketInventory called ---');
+        setIsLoading(true);
+        try {
+            const params: any = {};
+
+            if (selectedType !== 'All') {
+                const typeObj = vehicleTypes.find(t => t.name === selectedType);
+                if (typeObj && typeObj.id !== 'all') params.vehicleTypeId = typeObj.id;
+            }
+
+            if (selectedStatus !== 'All') {
+                params.status = selectedStatus === 'New Arrival' ? 'new' : selectedStatus === 'Upcoming' ? 'upcoming' : undefined;
+            }
+
+            if (activeFilters.brand && activeFilters.brand !== 'All') {
+                const brandObj = brands.find(b => b.name === activeFilters.brand);
+                if (brandObj && brandObj.id !== 'all') params.brandId = brandObj.id;
+            }
+
+            if (activeFilters.bodyType && activeFilters.bodyType !== 'All') {
+                const catObj = vehicleCategories.find(c => c.name === activeFilters.bodyType);
+                if (catObj && catObj.id !== 'all') params.categoryId = catObj.id;
+            }
+
+            if (activeFilters.model && activeFilters.model !== 'All') {
+                const modelObj = models.find(m => m.name === activeFilters.model);
+                if (modelObj) params.modelId = modelObj.id;
+            }
+
+            if (activeFilters.priceRange && activeFilters.priceRange !== 'All') {
+                const range = PRICE_RANGES.find(r => r.value === activeFilters.priceRange);
+                if (range) {
+                    if (range.value === '<20') {
+                        params.maxPrice = 2000000;
+                    } else if (range.value === '20-50') {
+                        params.minPrice = 2000000;
+                        params.maxPrice = 5000000;
+                    } else if (range.value === '50-100') {
+                        params.minPrice = 5000000;
+                        params.maxPrice = 10000000;
+                    } else if (range.value === '>100') {
+                        params.minPrice = 10000000;
+                    }
+                }
+            }
+
+            if (searchQuery) {
+                params.search = searchQuery;
+            }
+
+            console.log('Fetching inventory with params:', params);
+            const response = await getMarketInventory(params);
+            const inventory: MarketInventory[] = response.data;
+
+            // Map API data to UI Car interface
+            const mappedCars: Car[] = inventory.map(item => {
+                // Helper to map color name to hex if missing
+                const getColorHex = (name: string, providedHex?: string) => {
+                    if (providedHex) return providedHex;
+                    const colors: { [key: string]: string } = {
+                        'Red': '#EF4444', 'Blue': '#3B82F6', 'Black': '#171717', 'White': '#FFFFFF',
+                        'Silver': '#9CA3AF', 'Grey': '#4B5563', 'Yellow': '#EAB308', 'Green': '#22C55E'
+                    };
+                    return colors[name] || '#000000';
+                };
+
+                const mainImage = (item.imageUrl && item.imageUrl !== 'string')
+                    ? item.imageUrl
+                    : (item.colors?.find(c => c.images?.length > 0)?.images?.[0]?.imageUrl || 'https://images.unsplash.com/photo-1542362567-b05500269774');
+
+                return {
+                    id: item.id.toString(),
+                    brand: item.model.brand.name,
+                    model: item.vehicleName || item.model.name,
+                    year: item.year.toString(),
+                    price: `₹${item.priceNumeric >= 100 ? (item.priceNumeric / 100).toFixed(2) + ' Cr' : item.priceNumeric + ' Lakh'}`,
+                    priceNumeric: item.priceNumeric,
+                    emi: item.emiDisplay,
+                    image: mainImage,
+                    category: item.category?.name,
+                    type: item.vehicleType.name.toUpperCase() === 'BIKE' ? 'BIKE' : 'CAR',
+                    status: (item.status && (item.status.toLowerCase() === 'new' || item.status.toLowerCase() === 'new_arrival')) ? 'new'
+                        : (item.status && item.status.toLowerCase() === 'upcoming') ? 'upcoming'
+                            : (item.status && item.status.toLowerCase() === 'trending') ? 'trending'
+                                : undefined,
+                    specs: {
+                        power: `${item.powerHp} HP`,
+                        engine: `${item.engineCc} cc`,
+                        topSpeed: `${item.topSpeedKmh} km/h`,
+                        transmission: item.transmissionType,
+                        ...(item.specifications ? JSON.parse(item.specifications) : {})
+                    },
+                    colorOptions: item.colors?.map(c => ({
+                        name: c.colorName,
+                        color: getColorHex(c.colorName, c.hexCode),
+                        images: c.images?.map((img: any) => img.imageUrl) || []
+                    }))
+                };
+            });
+
+            setCars(mappedCars);
+        } catch (error) {
+            console.error('Failed to load market inventory:', error);
+            Alert.alert('Error', 'Failed to load market inventory.');
+            setCars([]); // Clear data on error instead of showing static data
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
     const statusCategories = ['All', 'New Arrival', 'Upcoming'];
     const [selectedType, setSelectedType] = useState('All');
     const [selectedStatus, setSelectedStatus] = useState('All');
@@ -40,21 +192,12 @@ export default function MarketScreen({ navigation }: { navigation: any }) {
     const [isFilterVisible, setIsFilterVisible] = useState(false);
     const [activeFilters, setActiveFilters] = useState({
         brand: 'All',
+        model: 'All',
         bodyType: 'All',
         priceRange: 'All',
     });
     const [selectedFilterTab, setSelectedFilterTab] = useState('Body Style'); // State for left-side tabs
 
-    const BODY_TYPES = ['All', 'Sedan', 'SUV', 'Sports', 'Electric', 'Luxury', 'Superbike'];
-    const BRANDS_LOGOS = [
-        { name: 'All', icon: 'https://cdn-icons-png.flaticon.com/512/1048/1048329.png' },
-        { name: 'BMW', icon: 'https://cdn-icons-png.flaticon.com/512/744/744465.png' },
-        { name: 'Mercedes', icon: 'https://cdn-icons-png.flaticon.com/512/744/744474.png' },
-        { name: 'Audi', icon: 'https://cdn-icons-png.flaticon.com/512/744/744458.png' },
-        { name: 'Tesla', icon: 'https://cdn-icons-png.flaticon.com/512/744/744483.png' },
-        { name: 'Porsche', icon: 'https://cdn-icons-png.flaticon.com/512/744/744479.png' },
-        { name: 'Ducati', icon: 'https://cdn-icons-png.flaticon.com/512/744/744477.png' },
-    ];
     const PRICE_RANGES = [
         { label: 'All', value: 'All' },
         { label: 'Under ₹20 Lakh', value: '<20' },
@@ -63,46 +206,32 @@ export default function MarketScreen({ navigation }: { navigation: any }) {
         { label: 'Over ₹1 Crore', value: '>100' },
     ];
 
-    // Filter and sort cars based on category, search query, and history
-    const filteredCars = BROWSE_CARS
-        .filter(car => {
-            // Type Filter (Top Scroll)
-            const matchesType = selectedType === 'All' ||
-                (selectedType === 'Cars' && car.type === 'CAR') ||
-                (selectedType === 'Bikes' && car.type === 'BIKE');
+    // Re-fetch when filters change
+    useEffect(() => {
+        loadMarketInventory();
+    }, [activeFilters, selectedType, selectedStatus, searchQuery]);
 
-            // Status Filter (New Arrival, Upcoming)
-            const matchesStatus = selectedStatus === 'All' ||
-                (selectedStatus === 'New Arrival' && car.status === 'new') ||
-                (selectedStatus === 'Upcoming' && car.status === 'upcoming');
+    // Filter models when brand changes
+    useEffect(() => {
+        if (activeFilters.brand === 'All') {
+            setFilteredModels(models);
+        } else {
+            const selectedBrandIds = brands
+                .filter(b => b.name === activeFilters.brand)
+                .map(b => b.id);
+            setFilteredModels(models.filter(m => selectedBrandIds.includes(m.brand.id)));
+        }
+    }, [activeFilters.brand, brands, models]);
 
-            // Search
-            const matchesSearch = car.brand.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                car.model.toLowerCase().includes(searchQuery.toLowerCase());
+    const filteredCars = [...cars].sort((a, b) => {
+        const indexA = recentlyViewed.indexOf(a.id);
+        const indexB = recentlyViewed.indexOf(b.id);
 
-            // Advanced Filters
-            const matchesBrand = activeFilters.brand === 'All' || car.brand === activeFilters.brand;
-            const matchesBodyType = activeFilters.bodyType === 'All' || car.category?.includes(activeFilters.bodyType);
-            const matchesPrice = activeFilters.priceRange === 'All' || (() => {
-                const price = car.priceNumeric;
-                if (activeFilters.priceRange === '<20') return price < 20;
-                if (activeFilters.priceRange === '20-50') return price >= 20 && price <= 50;
-                if (activeFilters.priceRange === '50-100') return price > 50 && price <= 100;
-                if (activeFilters.priceRange === '>100') return price > 100;
-                return true;
-            })();
-
-            return matchesType && matchesStatus && matchesSearch && matchesBrand && matchesBodyType && matchesPrice;
-        })
-        .sort((a, b) => {
-            const indexA = recentlyViewed.indexOf(a.id);
-            const indexB = recentlyViewed.indexOf(b.id);
-
-            if (indexA !== -1 && indexB !== -1) return indexA - indexB;
-            if (indexA !== -1) return -1;
-            if (indexB !== -1) return 1;
-            return 0;
-        });
+        if (indexA !== -1 && indexB !== -1) return indexA - indexB;
+        if (indexA !== -1) return -1;
+        if (indexB !== -1) return 1;
+        return 0;
+    });
 
     const toggleCarSelection = (carId: string) => {
         if (selectedCars.includes(carId)) {
@@ -143,6 +272,17 @@ export default function MarketScreen({ navigation }: { navigation: any }) {
                 )}
             </TouchableOpacity>
 
+            {/* <TouchableOpacity
+                style={styles.wishlistBtn}
+                onPress={() => toggleWishlist(item.id)}
+            >
+                <Ionicons
+                    name={wishlist.includes(item.id) ? "heart" : "heart-outline"}
+                    size={20}
+                    color={wishlist.includes(item.id) ? "#ef4444" : COLORS.textLight}
+                />
+            </TouchableOpacity> */}
+
             <View style={styles.carImage}>
                 <Image source={{ uri: item.image }} style={styles.carImageContent} resizeMode="cover" />
                 {item.status === 'new' && (
@@ -155,6 +295,12 @@ export default function MarketScreen({ navigation }: { navigation: any }) {
                     <View style={styles.upcomingBadge}>
                         <Ionicons name="time" size={10} color={COLORS.white} />
                         <Text style={styles.upcomingBadgeText}>Upcoming</Text>
+                    </View>
+                )}
+                {item.status === 'trending' && (
+                    <View style={styles.trendingBadge}>
+                        <Ionicons name="flash" size={10} color={COLORS.white} />
+                        <Text style={styles.trendingBadgeText}>Trending</Text>
                     </View>
                 )}
                 {(item.brand === 'BMW' || item.brand === 'Porsche' || item.brand === 'Tesla') && !item.status && (
@@ -242,262 +388,303 @@ export default function MarketScreen({ navigation }: { navigation: any }) {
                     </View>
                 )}
             </Header>
-            {/* Single Compact Filter Row */}
-            <View style={styles.filtersContainer}>
-                <ScrollView
-                    horizontal
-                    showsHorizontalScrollIndicator={false}
-                    contentContainerStyle={styles.filtersRow}
-                >
-                    {/* Type Filters */}
-                    {categories.map((category) => (
-                        <TouchableOpacity
-                            key={category}
-                            style={[
-                                styles.filterChip,
-                                selectedType === category && styles.filterChipActive,
-                            ]}
-                            onPress={() => setSelectedType(category)}
+            {isLoading ? (
+                <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+                    <ActivityIndicator size="large" color={COLORS.primary} />
+                    <Text style={{ marginTop: 20, color: COLORS.textLight }}>Loading Market Inventory...</Text>
+                </View>
+            ) : (
+                <>
+                    {/* Single Compact Filter Row */}
+                    <View style={styles.filtersContainer}>
+                        <ScrollView
+                            horizontal
+                            showsHorizontalScrollIndicator={false}
+                            contentContainerStyle={styles.filtersRow}
                         >
-                            <Text
-                                style={[
-                                    styles.filterChipText,
-                                    selectedType === category && styles.filterChipTextActive,
-                                ]}
-                            >
-                                {category}
-                            </Text>
-                        </TouchableOpacity>
-                    ))}
-
-                    {/* Divider */}
-                    <View style={styles.filterDivider} />
-
-                    {/* Status Filters */}
-                    {statusCategories.map((status) => (
-                        <TouchableOpacity
-                            key={status}
-                            style={[
-                                styles.filterChip,
-                                selectedStatus === status && styles.filterChipActive,
-                            ]}
-                            onPress={() => setSelectedStatus(status)}
-                        >
-                            {status === 'New Arrival' && (
-                                <Ionicons
-                                    name="sparkles"
-                                    size={13}
-                                    color={selectedStatus === status ? COLORS.white : COLORS.primary}
-                                    style={{ marginRight: 5 }}
-                                />
-                            )}
-                            {status === 'Upcoming' && (
-                                <Ionicons
-                                    name="time-outline"
-                                    size={13}
-                                    color={selectedStatus === status ? COLORS.white : COLORS.primary}
-                                    style={{ marginRight: 5 }}
-                                />
-                            )}
-                            <Text
-                                style={[
-                                    styles.filterChipText,
-                                    selectedStatus === status && styles.filterChipTextActive,
-                                ]}
-                            >
-                                {status}
-                            </Text>
-                        </TouchableOpacity>
-                    ))}
-
-                    {/* Filter Button */}
-                    <TouchableOpacity
-                        style={[
-                            styles.filterButton,
-                            (activeFilters.brand !== 'All' || activeFilters.bodyType !== 'All' || activeFilters.priceRange !== 'All') && styles.filterButtonActive
-                        ]}
-                        onPress={() => setIsFilterVisible(true)}
-                    >
-                        <Ionicons
-                            name="options-outline"
-                            size={16}
-                            color={(activeFilters.brand !== 'All' || activeFilters.bodyType !== 'All' || activeFilters.priceRange !== 'All') ? COLORS.white : COLORS.primary}
-                        />
-                        {(activeFilters.brand !== 'All' || activeFilters.bodyType !== 'All' || activeFilters.priceRange !== 'All') && (
-                            <View style={styles.filterButtonBadge} />
-                        )}
-                    </TouchableOpacity>
-                </ScrollView>
-            </View>
-
-
-            {/* Cars Grid */}
-            <FlatList
-                data={filteredCars}
-                renderItem={renderCarItem}
-                keyExtractor={(item) => item.id}
-                numColumns={2}
-                contentContainerStyle={styles.carsList}
-                columnWrapperStyle={styles.carsRow}
-                keyboardShouldPersistTaps="handled"
-                ListEmptyComponent={
-                    <View style={styles.emptySearch}>
-                        <Ionicons name="search-outline" size={60} color={COLORS.textExtraLight} style={{ marginBottom: 15 }} />
-                        <Text style={styles.emptyText}>No results found</Text>
-                        <Text style={[styles.emptyText, { fontSize: 14, marginTop: 5 }]}>Try adjusting your filters or search query</Text>
-                        <TouchableOpacity
-                            style={styles.resetBtn}
-                            onPress={() => {
-                                setSelectedType('All');
-                                setSelectedStatus('All');
-                                setSearchQuery('');
-                                setActiveFilters({ brand: 'All', bodyType: 'All', priceRange: 'All' });
-                            }}
-                        >
-                            <Text style={styles.resetBtnText}>Reset All Filters</Text>
-                        </TouchableOpacity>
-                    </View>
-                }
-            />
-
-            {/* Floating Compare Button */}
-            {
-                selectedCars.length > 0 && !isSearchVisible && (
-                    <TouchableOpacity
-                        style={styles.floatingBtn}
-                        onPress={handleCompare}
-                        activeOpacity={0.8}
-                    >
-                        <LinearGradient
-                            colors={['#f093fb', '#f5576c']}
-                            style={styles.floatingGradient}
-                            start={{ x: 0, y: 0 }}
-                            end={{ x: 1, y: 1 }}
-                        >
-                            <Text style={styles.floatingText}>Compare</Text>
-                            <View style={styles.floatingBadge}>
-                                <Text style={styles.floatingBadgeText}>{selectedCars.length}</Text>
-                            </View>
-                        </LinearGradient>
-                    </TouchableOpacity>
-                )
-            }
-
-            {/* Advanced Filter Modal (Bottom Sheet) */}
-            <Modal
-                visible={isFilterVisible}
-                transparent={true}
-                animationType="slide"
-                onRequestClose={() => setIsFilterVisible(false)}
-            >
-                <TouchableOpacity
-                    style={styles.modalOverlay}
-                    activeOpacity={1}
-                    onPress={() => setIsFilterVisible(false)}
-                >
-                    <View style={styles.filterSheet}>
-                        <View style={styles.sheetHeader}>
-                            <Text style={styles.sheetTitle}>Filters</Text>
-                            <TouchableOpacity onPress={() => setIsFilterVisible(false)}>
-                                <Ionicons name="close" size={24} color={COLORS.text} />
-                            </TouchableOpacity>
-                        </View>
-
-                        <View style={styles.sheetSplitBody}>
-                            {/* Left Column Tabs */}
-                            <View style={styles.leftCol}>
-                                {['Body Style', 'Popular Brands', 'Price Range'].map((tab) => (
-                                    <TouchableOpacity
-                                        key={tab}
-                                        style={[styles.tabItem, selectedFilterTab === tab && styles.tabItemActive]}
-                                        onPress={() => setSelectedFilterTab(tab)}
+                            {/* Type Filters */}
+                            {vehicleTypes.map((type) => (
+                                <TouchableOpacity
+                                    key={type.id}
+                                    style={[
+                                        styles.filterChip,
+                                        selectedType === type.name && styles.filterChipActive,
+                                    ]}
+                                    onPress={() => setSelectedType(type.name)}
+                                >
+                                    <Text
+                                        style={[
+                                            styles.filterChipText,
+                                            selectedType === type.name && styles.filterChipTextActive,
+                                        ]}
                                     >
-                                        <Text style={[styles.tabText, selectedFilterTab === tab && styles.tabTextActive]}>
-                                            {tab}
-                                        </Text>
-                                        {selectedFilterTab === tab && <View style={styles.activeTabIndicator} />}
-                                    </TouchableOpacity>
-                                ))}
+                                        {type.name}
+                                    </Text>
+                                </TouchableOpacity>
+                            ))}
+
+                            {/* Divider */}
+                            <View style={styles.filterDivider} />
+
+                            {/* Status Filters */}
+                            {statusCategories.map((status) => (
+                                <TouchableOpacity
+                                    key={status}
+                                    style={[
+                                        styles.filterChip,
+                                        selectedStatus === status && styles.filterChipActive,
+                                    ]}
+                                    onPress={() => setSelectedStatus(status)}
+                                >
+                                    {status === 'New Arrival' && (
+                                        <Ionicons
+                                            name="sparkles"
+                                            size={13}
+                                            color={selectedStatus === status ? COLORS.white : COLORS.primary}
+                                            style={{ marginRight: 5 }}
+                                        />
+                                    )}
+                                    {status === 'Upcoming' && (
+                                        <Ionicons
+                                            name="time-outline"
+                                            size={13}
+                                            color={selectedStatus === status ? COLORS.white : COLORS.primary}
+                                            style={{ marginRight: 5 }}
+                                        />
+                                    )}
+                                    <Text
+                                        style={[
+                                            styles.filterChipText,
+                                            selectedStatus === status && styles.filterChipTextActive,
+                                        ]}
+                                    >
+                                        {status}
+                                    </Text>
+                                </TouchableOpacity>
+                            ))}
+
+                            {/* Filter Button */}
+                            <TouchableOpacity
+                                style={[
+                                    styles.filterButton,
+                                    (activeFilters.brand !== 'All' || activeFilters.bodyType !== 'All' || activeFilters.priceRange !== 'All') && styles.filterButtonActive
+                                ]}
+                                onPress={() => setIsFilterVisible(true)}
+                            >
+                                <Ionicons
+                                    name="options-outline"
+                                    size={16}
+                                    color={(activeFilters.brand !== 'All' || activeFilters.bodyType !== 'All' || activeFilters.priceRange !== 'All') ? COLORS.white : COLORS.primary}
+                                />
+                                {(activeFilters.brand !== 'All' || activeFilters.bodyType !== 'All' || activeFilters.priceRange !== 'All') && (
+                                    <View style={styles.filterButtonBadge} />
+                                )}
+                            </TouchableOpacity>
+                        </ScrollView>
+                    </View>
+
+
+                    {/* Cars Grid */}
+                    <FlatList
+                        data={filteredCars}
+                        renderItem={renderCarItem}
+                        keyExtractor={(item) => item.id}
+                        numColumns={2}
+                        contentContainerStyle={styles.carsList}
+                        columnWrapperStyle={styles.carsRow}
+                        keyboardShouldPersistTaps="handled"
+                        ListEmptyComponent={
+                            <View style={styles.emptySearch}>
+                                <Ionicons name="search-outline" size={60} color={COLORS.textExtraLight} style={{ marginBottom: 15 }} />
+                                <Text style={styles.emptyText}>No results found</Text>
+                                <Text style={[styles.emptyText, { fontSize: 14, marginTop: 5 }]}>Try adjusting your filters or search query</Text>
+                                <TouchableOpacity
+                                    style={styles.resetBtn}
+                                    onPress={() => {
+                                        setSelectedType('All');
+                                        setSelectedStatus('All');
+                                        setSearchQuery('');
+                                        setActiveFilters({ brand: 'All', model: 'All', bodyType: 'All', priceRange: 'All' });
+                                    }}
+                                >
+                                    <Text style={styles.resetBtnText}>Reset All Filters</Text>
+                                </TouchableOpacity>
                             </View>
+                        }
+                    />
 
-                            {/* Right Column Content */}
-                            <ScrollView showsVerticalScrollIndicator={false} style={styles.rightCol} contentContainerStyle={styles.rightColContent}>
-                                {selectedFilterTab === 'Body Style' && (
-                                    <View style={styles.filterSection}>
-                                        <View style={styles.optionsWrap}>
-                                            {BODY_TYPES.map(type => (
-                                                <TouchableOpacity
-                                                    key={type}
-                                                    style={[styles.smallOptionChip, activeFilters.bodyType === type && styles.smallOptionChipActive]}
-                                                    onPress={() => setActiveFilters({ ...activeFilters, bodyType: type })}
-                                                >
-                                                    <Text style={[styles.smallOptionChipText, activeFilters.bodyType === type && styles.smallOptionChipTextActive]}>
-                                                        {type}
-                                                    </Text>
-                                                </TouchableOpacity>
-                                            ))}
-                                        </View>
+                    {/* Floating Compare Button */}
+                    {
+                        selectedCars.length > 0 && !isSearchVisible && (
+                            <TouchableOpacity
+                                style={styles.floatingBtn}
+                                onPress={handleCompare}
+                                activeOpacity={0.8}
+                            >
+                                <LinearGradient
+                                    colors={['#f093fb', '#f5576c']}
+                                    style={styles.floatingGradient}
+                                    start={{ x: 0, y: 0 }}
+                                    end={{ x: 1, y: 1 }}
+                                >
+                                    <Text style={styles.floatingText}>Compare</Text>
+                                    <View style={styles.floatingBadge}>
+                                        <Text style={styles.floatingBadgeText}>{selectedCars.length}</Text>
                                     </View>
-                                )}
+                                </LinearGradient>
+                            </TouchableOpacity>
+                        )
+                    }
 
-                                {selectedFilterTab === 'Popular Brands' && (
-                                    <View style={styles.filterSection}>
-                                        <View style={styles.optionsWrap}>
-                                            {BRANDS_LOGOS.map(brand => (
-                                                <TouchableOpacity
-                                                    key={brand.name}
-                                                    style={[styles.smallOptionChip, activeFilters.brand === brand.name && styles.smallOptionChipActive]}
-                                                    onPress={() => setActiveFilters({ ...activeFilters, brand: brand.name })}
-                                                >
-                                                    <Text style={[styles.smallOptionChipText, activeFilters.brand === brand.name && styles.smallOptionChipTextActive]}>
-                                                        {brand.name}
-                                                    </Text>
-                                                </TouchableOpacity>
-                                            ))}
-                                        </View>
-                                    </View>
-                                )}
+                    {/* Advanced Filter Modal (Bottom Sheet) */}
+                    <Modal
+                        visible={isFilterVisible}
+                        transparent={true}
+                        animationType="slide"
+                        onRequestClose={() => setIsFilterVisible(false)}
+                    >
+                        <TouchableOpacity
+                            style={styles.modalOverlay}
+                            activeOpacity={1}
+                            onPress={() => setIsFilterVisible(false)}
+                        >
+                            <View style={styles.filterSheet}>
+                                <View style={styles.sheetHeader}>
+                                    <Text style={styles.sheetTitle}>Filters</Text>
+                                    <TouchableOpacity onPress={() => setIsFilterVisible(false)}>
+                                        <Ionicons name="close" size={24} color={COLORS.text} />
+                                    </TouchableOpacity>
+                                </View>
 
-                                {selectedFilterTab === 'Price Range' && (
-                                    <View style={styles.filterSection}>
-                                        {PRICE_RANGES.map(range => (
+                                <View style={styles.sheetSplitBody}>
+                                    {/* Left Column Tabs */}
+                                    <View style={styles.leftCol}>
+                                        {['Body Style', 'Popular Brands', 'Model', 'Price Range'].map((tab) => (
                                             <TouchableOpacity
-                                                key={range.value}
-                                                style={[styles.radioItem, activeFilters.priceRange === range.value && styles.radioItemActive]}
-                                                onPress={() => setActiveFilters({ ...activeFilters, priceRange: range.value })}
+                                                key={tab}
+                                                style={[styles.tabItem, selectedFilterTab === tab && styles.tabItemActive]}
+                                                onPress={() => setSelectedFilterTab(tab)}
                                             >
-                                                <View style={[styles.radioButton, activeFilters.priceRange === range.value && styles.radioButtonActive]}>
-                                                    {activeFilters.priceRange === range.value && <View style={styles.radioButtonInner} />}
-                                                </View>
-                                                <Text style={[styles.radioLabel, activeFilters.priceRange === range.value && styles.radioLabelActive]}>
-                                                    {range.label}
+                                                <Text style={[styles.tabText, selectedFilterTab === tab && styles.tabTextActive]}>
+                                                    {tab}
                                                 </Text>
+                                                {selectedFilterTab === tab && <View style={styles.activeTabIndicator} />}
                                             </TouchableOpacity>
                                         ))}
                                     </View>
-                                )}
-                            </ScrollView>
-                        </View>
 
-                        <View style={styles.sheetFooter}>
-                            <TouchableOpacity
-                                style={styles.clearBtn}
-                                onPress={() => {
-                                    setActiveFilters({ brand: 'All', bodyType: 'All', priceRange: 'All' });
-                                }}
-                            >
-                                <Text style={styles.clearBtnText}>Clear All</Text>
-                            </TouchableOpacity>
-                            <TouchableOpacity
-                                style={[styles.applyBtn, { flex: 1 }]}
-                                onPress={() => setIsFilterVisible(false)}
-                            >
-                                <Text style={styles.applyBtnText}>Apply Filters</Text>
-                            </TouchableOpacity>
-                        </View>
-                    </View>
-                </TouchableOpacity>
-            </Modal>
+                                    {/* Right Column Content */}
+                                    <ScrollView showsVerticalScrollIndicator={false} style={styles.rightCol} contentContainerStyle={styles.rightColContent}>
+                                        {selectedFilterTab === 'Body Style' && (
+                                            <View style={styles.filterSection}>
+                                                <View style={styles.optionsWrap}>
+                                                    {vehicleCategories.map(cat => (
+                                                        <TouchableOpacity
+                                                            key={cat.id}
+                                                            style={[styles.smallOptionChip, activeFilters.bodyType === cat.name && styles.smallOptionChipActive]}
+                                                            onPress={() => setActiveFilters({ ...activeFilters, bodyType: cat.name })}
+                                                        >
+                                                            <Text style={[styles.smallOptionChipText, activeFilters.bodyType === cat.name && styles.smallOptionChipTextActive]}>
+                                                                {cat.name}
+                                                            </Text>
+                                                        </TouchableOpacity>
+                                                    ))}
+                                                </View>
+                                            </View>
+                                        )}
+
+                                        {selectedFilterTab === 'Popular Brands' && (
+                                            <View style={styles.filterSection}>
+                                                <View style={styles.optionsWrap}>
+                                                    {brands.map(brand => (
+                                                        <TouchableOpacity
+                                                            key={brand.id}
+                                                            style={[styles.smallOptionChip, activeFilters.brand === brand.name && styles.smallOptionChipActive]}
+                                                            onPress={() => setActiveFilters({ ...activeFilters, brand: brand.name, model: 'All' })}
+                                                        >
+                                                            <Text style={[styles.smallOptionChipText, activeFilters.brand === brand.name && styles.smallOptionChipTextActive]}>
+                                                                {brand.name}
+                                                            </Text>
+                                                        </TouchableOpacity>
+                                                    ))}
+                                                </View>
+                                            </View>
+                                        )}
+
+                                        {selectedFilterTab === 'Model' && (
+                                            <View style={styles.filterSection}>
+                                                {activeFilters.brand === 'All' ? (
+                                                    <Text style={{ color: COLORS.textLight, fontStyle: 'italic', margin: 10 }}>
+                                                        Select a brand first to see models.
+                                                    </Text>
+                                                ) : (
+                                                    <View style={styles.optionsWrap}>
+                                                        <TouchableOpacity
+                                                            style={[styles.smallOptionChip, activeFilters.model === 'All' && styles.smallOptionChipActive]}
+                                                            onPress={() => setActiveFilters({ ...activeFilters, model: 'All' })}
+                                                        >
+                                                            <Text style={[styles.smallOptionChipText, activeFilters.model === 'All' && styles.smallOptionChipTextActive]}>
+                                                                All
+                                                            </Text>
+                                                        </TouchableOpacity>
+                                                        {filteredModels.map(model => (
+                                                            <TouchableOpacity
+                                                                key={model.id}
+                                                                style={[styles.smallOptionChip, activeFilters.model === model.name && styles.smallOptionChipActive]}
+                                                                onPress={() => setActiveFilters({ ...activeFilters, model: model.name })}
+                                                            >
+                                                                <Text style={[styles.smallOptionChipText, activeFilters.model === model.name && styles.smallOptionChipTextActive]}>
+                                                                    {model.name}
+                                                                </Text>
+                                                            </TouchableOpacity>
+                                                        ))}
+                                                    </View>
+                                                )}
+                                            </View>
+                                        )}
+
+                                        {selectedFilterTab === 'Price Range' && (
+                                            <View style={styles.filterSection}>
+                                                {PRICE_RANGES.map(range => (
+                                                    <TouchableOpacity
+                                                        key={range.value}
+                                                        style={[styles.radioItem, activeFilters.priceRange === range.value && styles.radioItemActive]}
+                                                        onPress={() => setActiveFilters({ ...activeFilters, priceRange: range.value })}
+                                                    >
+                                                        <View style={[styles.radioButton, activeFilters.priceRange === range.value && styles.radioButtonActive]}>
+                                                            {activeFilters.priceRange === range.value && <View style={styles.radioButtonInner} />}
+                                                        </View>
+                                                        <Text style={[styles.radioLabel, activeFilters.priceRange === range.value && styles.radioLabelActive]}>
+                                                            {range.label}
+                                                        </Text>
+                                                    </TouchableOpacity>
+                                                ))}
+                                            </View>
+                                        )}
+                                    </ScrollView>
+                                </View>
+
+                                <View style={styles.sheetFooter}>
+                                    <TouchableOpacity
+                                        style={styles.clearBtn}
+                                        onPress={() => {
+                                            setActiveFilters({ brand: 'All', model: 'All', bodyType: 'All', priceRange: 'All' });
+                                        }}
+                                    >
+                                        <Text style={styles.clearBtnText}>Clear All</Text>
+                                    </TouchableOpacity>
+                                    <TouchableOpacity
+                                        style={[styles.applyBtn, { flex: 1 }]}
+                                        onPress={() => setIsFilterVisible(false)}
+                                    >
+                                        <Text style={styles.applyBtnText}>Apply Filters</Text>
+                                    </TouchableOpacity>
+                                </View>
+                            </View>
+                        </TouchableOpacity>
+                    </Modal>
+                </>
+            )}
         </KeyboardAvoidingView >
     );
 }
@@ -564,6 +751,19 @@ const styles = StyleSheet.create({
     filterButtonActive: {
         backgroundColor: COLORS.primary,
         borderColor: COLORS.primary,
+    },
+    wishlistBtn: {
+        position: 'absolute',
+        top: 40,
+        right: 8,
+        width: 32,
+        height: 32,
+        borderRadius: 16,
+        backgroundColor: 'rgba(255, 255, 255, 0.9)',
+        justifyContent: 'center',
+        alignItems: 'center',
+        zIndex: 5,
+        ...SHADOWS.light,
     },
     filterButtonBadge: {
         position: 'absolute',

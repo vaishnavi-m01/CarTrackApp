@@ -19,6 +19,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
+import apiClient from '../api/apiClient';
 import { COLORS } from '../constants/theme';
 import { useAuth } from '../context/AuthContext';
 import { StackNavigationProp } from '@react-navigation/stack';
@@ -38,7 +39,6 @@ export default function AddStoryScreen({ navigation }: AddStoryScreenProps) {
     const [caption, setCaption] = useState('');
     const [isAddingCaption, setIsAddingCaption] = useState(false);
     const [isPosting, setIsPosting] = useState(false);
-    const { addStory } = useApp();
     const { user } = useAuth();
 
     // Caption positioning
@@ -156,9 +156,8 @@ export default function AddStoryScreen({ navigation }: AddStoryScreenProps) {
 
         const result = await ImagePicker.launchImageLibraryAsync({
             mediaTypes: ImagePicker.MediaTypeOptions.All,
-            allowsEditing: true, // Enabled for Instagram-style experience
-            aspect: [9, 16],
-            quality: 0.8,
+            allowsEditing: false, // No forced crop
+            quality: 0.9,
             videoMaxDuration: 60,
         });
 
@@ -169,45 +168,78 @@ export default function AddStoryScreen({ navigation }: AddStoryScreenProps) {
     };
 
     const handleShareStory = async () => {
-        if (!selectedMedia) {
-            Alert.alert('No media selected', 'Please select an image or video for your story');
+        if (!selectedMedia || !user) {
+            Alert.alert('Error', 'No media selected or user not logged in');
             return;
         }
 
         setIsPosting(true);
 
-        // Add story to context
-        addStory({
-            userId: user?.id || 'anonymous',
-            userName: user?.name || 'User',
-            userAvatar: undefined,
-            mediaUri: selectedMedia,
-            mediaType: mediaType,
-            caption: caption.trim(),
-            captionPosition: captionPosition,
-            captionStyle: {
-                fontSize,
-                fontFamily,
-                color: textColor,
-            },
-        });
+        try {
+            const formData = new FormData();
+            const storyData = JSON.stringify({
+                userId: user.id,
+                mediaType: mediaType.toUpperCase(),
+                caption: caption.trim(),
+                captionMetadata: {
+                    captionPosition: captionPosition,
+                    captionStyle: {
+                        fontSize,
+                        fontFamily,
+                        color: textColor,
+                    }
+                }
+            });
 
-        setIsPosting(false);
+            formData.append('data', storyData);
 
-        if (Platform.OS === 'android') {
-            ToastAndroid.show('Story shared successfully!', ToastAndroid.SHORT);
-        } else {
-            Alert.alert('Success', 'Story shared successfully!');
+            const name = selectedMedia.split('/').pop() || 'story.jpg';
+            const type = mediaType === 'video' ? 'video/mp4' : 'image/jpeg';
+            formData.append('file', {
+                uri: selectedMedia,
+                name,
+                type,
+            } as any);
+
+            await apiClient.post('/story', formData, {
+                headers: { 'Content-Type': 'multipart/form-data' }
+            });
+
+            if (Platform.OS === 'android') {
+                ToastAndroid.show('Story shared successfully!', ToastAndroid.SHORT);
+            } else {
+                Alert.alert('Success', 'Story shared successfully!');
+            }
+
+            navigation.goBack();
+        } catch (error) {
+            console.error('Error adding story in screen:', error);
+            Alert.alert('Failed to post story', 'Please try again.');
+        } finally {
+            setIsPosting(false);
         }
-
-        navigation.goBack();
     };
 
     return (
         <View style={styles.container}>
             {selectedMedia ? (
                 <View style={styles.previewContainer}>
-                    <Image source={{ uri: selectedMedia }} style={styles.previewImage} resizeMode="cover" />
+                    {/* Blurred background — full screen, cover, same image */}
+                    <Image
+                        source={{ uri: selectedMedia }}
+                        style={styles.blurredBackground}
+                        resizeMode="cover"
+                        blurRadius={25}
+                    />
+                    {/* Dark overlay on top of blur for contrast */}
+                    <View style={styles.blurOverlay} />
+
+                    {/* Main image — centered, no crop, no distortion */}
+                    <Image
+                        source={{ uri: selectedMedia }}
+                        style={styles.mainImage}
+                        resizeMode="contain"
+                    />
 
                     {/* Top Gradient for visibility */}
                     <LinearGradient
@@ -468,10 +500,31 @@ const styles = StyleSheet.create({
         backgroundColor: '#000',
         position: 'relative',
     },
-    previewImage: {
+    blurredBackground: {
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
         width: '100%',
         height: '100%',
-        resizeMode: 'contain',
+    },
+    blurOverlay: {
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        backgroundColor: 'rgba(0,0,0,0.35)',
+    },
+    mainImage: {
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        width: '100%',
+        height: '100%',
     },
     // Top Controls
     topControls: {

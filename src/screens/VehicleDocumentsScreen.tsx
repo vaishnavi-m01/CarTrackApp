@@ -13,13 +13,18 @@ import {
     Platform,
     Linking,
     ActivityIndicator,
+    Dimensions,
+    FlatList,
+    ToastAndroid
 } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+
+const { width: SCREEN_WIDTH } = Dimensions.get('window');
+import { Ionicons, FontAwesome5 } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
 import * as Sharing from 'expo-sharing';
 import * as IntentLauncher from 'expo-intent-launcher';
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import { LinearGradient } from 'expo-linear-gradient';
 import { COLORS, SIZES, SHADOWS } from '../constants/theme';
 import { useApp, VehicleDocument, DocumentFile } from '../context/AppContext';
@@ -34,18 +39,39 @@ export default function VehicleDocumentsScreen({ route, navigation }: { route: a
     const { vehicleId } = route.params;
     const [documents, setDocuments] = useState<VehicleDocument[]>([]);
     const [isLoading, setIsLoading] = useState(true);
-    const [isViewModalVisible, setViewModalVisible] = useState(false);
     const [selectedDoc, setSelectedDoc] = useState<VehicleDocument | null>(null);
-    const [imageViewerVisible, setImageViewerVisible] = useState(false);
-    const [currentImageUri, setCurrentImageUri] = useState<string | null>(null);
 
     const fetchDocuments = async () => {
         try {
             setIsLoading(true);
             const response = await apiClient.get(`/documents/vehicle/${vehicleId}`);
             if (response.data) {
-                // Documents now come with files included thanks to previous backend work
-                setDocuments(response.data);
+                // Map API response to frontend types
+                const mappedDocs = response.data.map((doc: any) => ({
+                    ...doc,
+                    // Map documentType.name to type for UI logic
+                    type: doc.documentType?.name || 'Other',
+                    // Map documentTypetypeId to documentTypeId
+                    documentTypeId: doc.documentTypetypeId,
+                    // Convert YYYY-MM-DD from API to DD/MM/YYYY for display
+                    expiryDate: doc.expiryDate ? doc.expiryDate.split('-').reverse().join('/') : doc.expiryDate,
+                    addedDate: doc.addedDate ? doc.addedDate.split('-').reverse().join('/') : doc.addedDate,
+                    files: (doc.files || []).map((f: any) => {
+                        const url = f.fileUrl || '';
+                        const encodedFilename = url.split('/').pop() || 'file';
+                        const filename = decodeURIComponent(encodedFilename);
+                        const isImage = /\.(jpg|jpeg|png|webp)$/i.test(filename);
+                        const isPdf = /\.pdf$/i.test(filename);
+                        return {
+                            id: f.id,
+                            uri: url,
+                            fileUrl: url,
+                            name: filename,
+                            type: isImage ? 'image' : (isPdf ? 'pdf' : 'other')
+                        };
+                    })
+                }));
+                setDocuments(mappedDocs);
             }
         } catch (error) {
             console.error('Error fetching documents:', error);
@@ -61,75 +87,18 @@ export default function VehicleDocumentsScreen({ route, navigation }: { route: a
         }, [vehicleId])
     );
 
-    const deleteDocument = async (id: number) => {
+    const deleteDocument = async (id: string) => {
         try {
             await apiClient.delete(`/documents/${id}`);
-            Alert.alert('Success', 'Document deleted successfully');
+            if (Platform.OS === 'android') {
+                ToastAndroid.show('Document deleted successfully', ToastAndroid.SHORT);
+            } else {
+                Alert.alert('Success', 'Document deleted successfully');
+            }
             fetchDocuments(); // Refresh list
         } catch (error) {
             console.error('Error deleting document:', error);
             Alert.alert('Error', 'Failed to delete document');
-        }
-    };
-
-    const handleViewFile = async (file: DocumentFile) => {
-        try {
-            // 1. Handle Images Internally
-            if (file.type === 'image' || file.name.match(/\.(jpg|jpeg|png|webp)$/i)) {
-                setCurrentImageUri(file.uri);
-                setImageViewerVisible(true);
-                return;
-            }
-
-            // 2. Handle Documents (PDF etc)
-            let mimeType = 'application/octet-stream';
-            if (file.type === 'pdf' || file.name.toLowerCase().endsWith('.pdf')) mimeType = 'application/pdf';
-
-            if (Platform.OS === 'android') {
-                let contentUri = file.uri;
-
-                // If it's already content://, use it. If file://, convert it.
-                if (contentUri.startsWith('file://')) {
-                    try {
-                        contentUri = await FileSystem.getContentUriAsync(file.uri);
-                    } catch (e) {
-                        console.log('Error getting content URI directly, trying copy:', e);
-                        // Fallback: Copy to cache to ensure it's accessible and then get URI
-                        const dest = FileSystem.cacheDirectory + file.name;
-                        await FileSystem.copyAsync({ from: file.uri, to: dest });
-                        contentUri = await FileSystem.getContentUriAsync(dest);
-                    }
-                }
-
-                await IntentLauncher.startActivityAsync('android.intent.action.VIEW', {
-                    data: contentUri,
-                    flags: 1,
-                    type: mimeType,
-                });
-            } else {
-                // iOS: Try Linking first for direct open
-                const canOpen = await Linking.canOpenURL(file.uri);
-                if (canOpen) {
-                    await Linking.openURL(file.uri);
-                } else {
-                    // Fallback to sharing 
-                    await Sharing.shareAsync(file.uri, {
-                        mimeType,
-                        UTI: file.type === 'pdf' ? 'com.adobe.pdf' : undefined
-                    });
-                }
-            }
-        } catch (err) {
-            console.error('Direct view failed, trying share fallback:', err);
-            if (file.type !== 'image') {
-                try {
-                    await Sharing.shareAsync(file.uri);
-                } catch (shareErr) {
-                    Alert.alert('Error', 'Could not open file.');
-                }
-            } else {
-                Alert.alert('Error', 'Could not open image.');
-            }
         }
     };
 
@@ -146,7 +115,6 @@ export default function VehicleDocumentsScreen({ route, navigation }: { route: a
                 {
                     text: 'Delete', style: 'destructive', onPress: () => {
                         deleteDocument(id);
-                        setViewModalVisible(false);
                     }
                 }
             ]
@@ -178,12 +146,9 @@ export default function VehicleDocumentsScreen({ route, navigation }: { route: a
         return (
             <TouchableOpacity
                 key={doc.id}
-                style={styles.docRow}
+                style={styles.docCard}
                 activeOpacity={0.7}
-                onPress={() => {
-                    setSelectedDoc(doc);
-                    setViewModalVisible(true);
-                }}
+                onPress={() => navigation.navigate('DocumentDetail', { document: doc })}
             >
                 <View style={[styles.iconBox, { backgroundColor: style.bg }]}>
                     <Ionicons name={style.icon as any} size={22} color={style.color} />
@@ -212,7 +177,16 @@ export default function VehicleDocumentsScreen({ route, navigation }: { route: a
                                 handleEdit(doc);
                             }}
                         >
-                            <Ionicons name="create-outline" size={22} color={COLORS.textExtraLight} />
+                            <FontAwesome5 name="edit" size={18} color={COLORS.primary} />
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                            style={styles.actionBtn}
+                            onPress={(e) => {
+                                e.stopPropagation();
+                                confirmDelete(doc.id);
+                            }}
+                        >
+                            <Ionicons name="trash-outline" size={20} color={COLORS.danger} />
                         </TouchableOpacity>
                     </View>
                 )}
@@ -249,130 +223,7 @@ export default function VehicleDocumentsScreen({ route, navigation }: { route: a
                     <Ionicons name="add" size={30} color={COLORS.white} />
                 </LinearGradient>
             </TouchableOpacity>
-
-            {/* View Details Modal */}
-            <Modal
-                animationType="slide"
-                transparent={true}
-                visible={isViewModalVisible}
-                onRequestClose={() => setViewModalVisible(false)}
-            >
-                <TouchableOpacity
-                    style={styles.modalOverlay}
-                    activeOpacity={1}
-                    onPress={() => setViewModalVisible(false)}
-                >
-                    <View style={[styles.modalContent, { height: '90%' }]}>
-                        <View style={styles.dragHandle} />
-                        <View style={styles.modalHeader}>
-                            <Text style={styles.modalTitle}>{selectedDoc?.title || 'Document View'}</Text>
-                            <TouchableOpacity onPress={() => setViewModalVisible(false)} style={styles.closeBtn}>
-                                <Ionicons name="close" size={24} color={COLORS.text} />
-                            </TouchableOpacity>
-                        </View>
-
-                        {selectedDoc && (
-                            <ScrollView showsVerticalScrollIndicator={false}>
-                                <View style={styles.detailsBox}>
-                                    <View style={styles.detailItem}>
-                                        <Text style={styles.detailLabel}>Type</Text>
-                                        <Text style={styles.detailValue}>{selectedDoc.type}</Text>
-                                    </View>
-                                    <View style={styles.detailItem}>
-                                        <Text style={styles.detailLabel}>Added Date</Text>
-                                        <Text style={styles.detailValue}>{selectedDoc.addedDate}</Text>
-                                    </View>
-                                    {selectedDoc.expiryDate && (
-                                        <View style={styles.detailItem}>
-                                            <Text style={styles.detailLabel}>Expiry Date</Text>
-                                            <Text style={[styles.detailValue, { color: COLORS.warning }]}>{selectedDoc.expiryDate}</Text>
-                                        </View>
-                                    )}
-                                </View>
-
-                                <Text style={styles.sectionTitle}>Files ({(selectedDoc.files || []).length})</Text>
-                                {(selectedDoc.files || []).map((file, idx) => (
-                                    <View key={idx} style={styles.filePreviewCard}>
-                                        {file.type === 'image' ? (
-                                            <TouchableOpacity
-                                                style={styles.fullImageContainer}
-                                                onPress={() => handleViewFile(file)}
-                                            >
-                                                <Image source={{ uri: file.uri }} style={styles.fullImage} />
-                                            </TouchableOpacity>
-                                        ) : (
-                                            <View style={styles.pdfCard}>
-                                                <Ionicons name="document-text" size={40} color={COLORS.danger} />
-                                                <View style={{ flex: 1, marginLeft: 12 }}>
-                                                    <Text style={styles.fileName} numberOfLines={1}>{file.name}</Text>
-                                                    <Text style={styles.fileSize}>Document</Text>
-                                                </View>
-                                                <TouchableOpacity
-                                                    style={styles.viewPdfBtn}
-                                                    onPress={() => handleViewFile(file)}
-                                                >
-                                                    <Text style={styles.viewPdfText}>View</Text>
-                                                </TouchableOpacity>
-                                            </View>
-                                        )}
-                                    </View>
-                                ))}
-
-                                {selectedDoc.type === 'Insurance' && (
-                                    <View style={styles.quickActions}>
-                                        <TouchableOpacity style={styles.quickActionBtn}>
-                                            <Ionicons name="download-outline" size={20} color={COLORS.primary} />
-                                            <Text style={styles.quickActionLabel}>Download All</Text>
-                                        </TouchableOpacity>
-                                        <TouchableOpacity style={[styles.quickActionBtn, { backgroundColor: '#F0F9FF', borderColor: '#BAE6FD' }]}>
-                                            <Ionicons name="call-outline" size={20} color="#0284C7" />
-                                            <Text style={[styles.quickActionLabel, { color: '#0284C7' }]}>Call Support</Text>
-                                        </TouchableOpacity>
-                                    </View>
-                                )}
-
-                                <TouchableOpacity
-                                    style={[styles.submitAction, { backgroundColor: '#FEE2E2', marginTop: 30 }]}
-                                    onPress={() => confirmDelete(selectedDoc.id)}
-                                >
-                                    <View style={[styles.submitGradient, { backgroundColor: 'transparent' }]}>
-                                        <Text style={[styles.submitActionText, { color: COLORS.danger }]}>Delete Document</Text>
-                                    </View>
-                                </TouchableOpacity>
-                                <View style={{ height: 40 }} />
-                            </ScrollView>
-                        )}
-                    </View>
-                </TouchableOpacity>
-            </Modal>
-
-            {/* Full Screen Image Viewer Modal */}
-            <Modal
-                visible={imageViewerVisible}
-                transparent={true}
-                onRequestClose={() => setImageViewerVisible(false)}
-                animationType="fade"
-            >
-                <View style={{ flex: 1, backgroundColor: 'black', justifyContent: 'center', alignItems: 'center' }}>
-                    <SafeAreaView style={{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 10 }}>
-                        <TouchableOpacity
-                            onPress={() => setImageViewerVisible(false)}
-                            style={{ padding: 20, alignSelf: 'flex-end' }}
-                        >
-                            <Ionicons name="close-circle" size={36} color="white" />
-                        </TouchableOpacity>
-                    </SafeAreaView>
-
-                    {currentImageUri && (
-                        <Image
-                            source={{ uri: currentImageUri }}
-                            style={{ width: '100%', height: '100%', resizeMode: 'contain' }}
-                        />
-                    )}
-                </View>
-            </Modal>
-
-        </SafeAreaView >
+        </SafeAreaView>
     );
 }
 
@@ -380,11 +231,11 @@ const styles = StyleSheet.create({
     container: { flex: 1, backgroundColor: '#FCFCFC' },
     scrollContent: { padding: 16, paddingBottom: 100 },
     headerSpacer: { height: 10 },
-    docRow: {
+    docCard: {
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: COLORS.white,
         padding: 16,
+        backgroundColor: COLORS.white,
         borderRadius: 16,
         marginBottom: 12,
         borderWidth: 1,
@@ -392,170 +243,22 @@ const styles = StyleSheet.create({
         ...SHADOWS.light,
     },
     iconBox: {
-        width: 48,
-        height: 48,
+        width: 44,
+        height: 44,
         borderRadius: 12,
         justifyContent: 'center',
         alignItems: 'center',
-        marginRight: 16,
     },
-    docMainInfo: { flex: 1 },
+    docMainInfo: { flex: 1, marginLeft: 16 },
     docTitleText: { fontSize: 16, fontWeight: 'bold', color: COLORS.text },
-    docSubText: { fontSize: 12, color: COLORS.textLight, marginTop: 4 },
-    actionGroup: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-    actionBtn: { padding: 8 },
-    updateBtn: {
-        backgroundColor: '#F97316',
-        paddingHorizontal: 16,
-        paddingVertical: 8,
-        borderRadius: 8,
-    },
-    updateBtnText: { color: COLORS.white, fontSize: 12, fontWeight: 'bold' },
-    sectionTitle: { fontSize: 16, fontWeight: 'bold', color: COLORS.text, marginTop: 24, marginBottom: 12 },
-    filePreviewCard: { marginBottom: 16 },
-    fullImageContainer: {
-        width: '100%',
-        height: 300,
-        borderRadius: 16,
-        backgroundColor: '#F1F5F9',
-        overflow: 'hidden',
-    },
-    fullImage: { width: '100%', height: '100%', resizeMode: 'contain' },
-    pdfCard: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        backgroundColor: '#F8FAFC',
-        padding: 16,
-        borderRadius: 16,
-        borderWidth: 1,
-        borderColor: '#E2E8F0',
-    },
-    fileName: { fontSize: 14, fontWeight: 'bold', color: COLORS.text },
-    fileSize: { fontSize: 12, color: COLORS.textLight, marginTop: 2 },
-    viewPdfBtn: {
-        backgroundColor: COLORS.white,
-        paddingHorizontal: 16,
-        paddingVertical: 8,
-        borderRadius: 8,
-        borderWidth: 1,
-        borderColor: COLORS.primary,
-    },
-    viewPdfText: { color: COLORS.primary, fontSize: 12, fontWeight: 'bold' },
-    detailsBox: {
-        backgroundColor: '#F8FAFC',
-        borderRadius: 16,
-        padding: 16,
-        gap: 16,
-    },
-    detailItem: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-    },
-    detailLabel: { fontSize: 13, color: COLORS.textLight, fontWeight: '500' },
-    detailValue: { fontSize: 15, color: COLORS.text, fontWeight: 'bold' },
-    quickActions: {
-        flexDirection: 'row',
-        gap: 12,
-        marginTop: 20,
-    },
-    quickActionBtn: {
-        flex: 1,
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: 8,
-        backgroundColor: '#E0E7FF',
-        paddingVertical: 12,
-        borderRadius: 12,
-        borderWidth: 1,
-        borderColor: '#C7D2FE',
-    },
-    quickActionLabel: { fontSize: 12, fontWeight: 'bold', color: COLORS.primary },
+    docSubText: { fontSize: 13, color: COLORS.textLight, marginTop: 4 },
+    actionGroup: { flexDirection: 'row', alignItems: 'center' },
+    actionBtn: { padding: 8, marginLeft: 4 },
+    updateBtn: { backgroundColor: '#FEF2F2', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8 },
+    updateBtnText: { color: COLORS.danger, fontSize: 12, fontWeight: 'bold' },
+    fab: { position: 'absolute', bottom: 30, right: 20, width: 60, height: 60, borderRadius: 30, ...SHADOWS.medium },
+    fabGradient: { flex: 1, borderRadius: 30, justifyContent: 'center', alignItems: 'center' },
     emptyContainer: { alignItems: 'center', marginTop: 120, paddingHorizontal: 40 },
     emptyTitle: { fontSize: 20, fontWeight: 'bold', color: COLORS.text, marginTop: 20 },
     emptySubtitle: { fontSize: 14, color: COLORS.textLight, textAlign: 'center', marginTop: 8, lineHeight: 20 },
-    fab: { position: 'absolute', bottom: 30, right: 20, width: 60, height: 60, borderRadius: 30, ...SHADOWS.medium },
-    fabGradient: { flex: 1, borderRadius: 30, justifyContent: 'center', alignItems: 'center' },
-    modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' },
-    modalContent: {
-        backgroundColor: COLORS.white,
-        borderTopLeftRadius: 32,
-        borderTopRightRadius: 32,
-        padding: 24,
-        maxHeight: '92%',
-    },
-    modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 },
-    modalTitle: { fontSize: 22, fontWeight: 'bold', color: COLORS.text },
-    closeBtn: { padding: 4 },
-    label: { fontSize: 14, fontWeight: 'bold', color: COLORS.text, marginBottom: 8, marginTop: 12 },
-    typeSelector: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-    typeChip: { paddingHorizontal: 16, paddingVertical: 8, borderRadius: 10, borderWidth: 1, borderColor: '#E2E8F0', backgroundColor: '#F8FAFC' },
-    typeChipActive: { backgroundColor: COLORS.primary, borderColor: COLORS.primary },
-    typeChipText: { fontSize: 13, color: COLORS.textLight, fontWeight: '600' },
-    typeChipTextActive: { color: COLORS.white },
-    textInput: {
-        backgroundColor: '#F8FAFC',
-        borderWidth: 1,
-        borderColor: '#E2E8F0',
-        borderRadius: 12,
-        padding: 14,
-        fontSize: 15,
-        color: COLORS.text,
-    },
-    miniPickBtn: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 4,
-        paddingHorizontal: 10,
-        paddingVertical: 6,
-        borderRadius: 8,
-        backgroundColor: '#EFF6FF',
-        borderWidth: 1,
-        borderColor: '#DBEAFE',
-    },
-    miniPickText: { fontSize: 12, fontWeight: 'bold', color: COLORS.primary },
-    modalFooter: { flexDirection: 'row', gap: 15, marginTop: 20 },
-    modalBtn: { flex: 1, borderRadius: 16, overflow: 'hidden', ...SHADOWS.medium },
-    cancelModalBtn: { backgroundColor: '#F1F5F9', borderWidth: 1, borderColor: '#E2E8F0', alignItems: 'center', justifyContent: 'center', shadowOpacity: 0, elevation: 0 },
-    cancelModalBtnText: { color: COLORS.textLight, fontSize: 16, fontWeight: '600', paddingVertical: 16 },
-    fileList: { gap: 10 },
-    fileItem: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        padding: 12,
-        backgroundColor: '#F8FAFC',
-        borderRadius: 12,
-        borderWidth: 1,
-        borderColor: '#E2E8F0',
-    },
-    fileIconBox: { width: 36, height: 36, borderRadius: 8, backgroundColor: COLORS.white, justifyContent: 'center', alignItems: 'center' },
-    fileItemName: { flex: 1, marginLeft: 12, fontSize: 14, color: COLORS.text },
-    removeFileBtn: { padding: 4 },
-    imageZone: {
-        height: 120,
-        borderRadius: 16,
-        borderWidth: 2,
-        borderColor: '#E2E8F0',
-        borderStyle: 'dashed',
-        backgroundColor: '#F8FAFC',
-        overflow: 'hidden',
-    },
-    imagePlaceholder: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-    imageHint: { marginTop: 12, fontSize: 13, color: COLORS.textExtraLight },
-    submitAction: { marginTop: 32, borderRadius: 16, overflow: 'hidden' },
-    submitGradient: { paddingVertical: 16, borderRadius: 16, alignItems: 'center' },
-    submitActionText: { color: COLORS.white, fontSize: 16, fontWeight: 'bold' },
-    bottomModal: {
-        justifyContent: 'flex-end',
-        margin: 0,
-    },
-    dragHandle: {
-        width: 40,
-        height: 5,
-        backgroundColor: '#E2E8F0',
-        borderRadius: 2.5,
-        alignSelf: 'center',
-        marginBottom: 20,
-    },
 });

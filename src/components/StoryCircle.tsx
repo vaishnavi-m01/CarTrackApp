@@ -2,11 +2,12 @@ import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Image } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
-import { COLORS } from '../constants/theme';
+import { COLORS, SHADOWS } from '../constants/theme';
 
 interface StoryCircleProps {
     userName: string;
     userAvatar?: string;
+    userInitial?: string; // Added prop for specific initial
     hasUnviewed: boolean;
     isAddStory?: boolean;
     onPress: () => void;
@@ -16,6 +17,7 @@ interface StoryCircleProps {
 export default function StoryCircle({
     userName,
     userAvatar,
+    userInitial,
     hasUnviewed,
     isAddStory = false,
     onPress,
@@ -34,18 +36,23 @@ export default function StoryCircle({
                     {userAvatar ? (
                         <Image source={{ uri: userAvatar }} style={styles.avatar} />
                     ) : (
-                        <View style={[styles.avatar, styles.avatarPlaceholder]}>
+                        <LinearGradient
+                            colors={[COLORS.primary, COLORS.secondary]}
+                            style={styles.avatarPlaceholder}
+                        >
                             <Text style={styles.avatarText}>
-                                {userName.charAt(0).toUpperCase()}
+                                {userInitial || (userName ? userName.charAt(0).toUpperCase() : '?')}
                             </Text>
-                        </View>
+                        </LinearGradient>
                     )}
-                    {/* Render Plus Icon if isAddStory OR if onAddPress is provided (meaning we have a story but want to show add option) */}
+
+                    {/* Render Plus Icon if isAddStory OR if onAddPress is provided */}
                     {(isAddStory || onAddPress) && (
                         <TouchableOpacity
                             style={styles.addIconContainer}
-                            onPress={onAddPress || onPress} // If specific add handler, use it (stops bubbling?), otherwise fallback to main press
+                            onPress={onAddPress || onPress}
                             activeOpacity={0.8}
+                            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
                         >
                             <Ionicons name="add-circle" size={24} color={COLORS.primary} />
                         </TouchableOpacity>
@@ -86,7 +93,9 @@ const styles = StyleSheet.create({
         borderRadius: 31,
     },
     avatarPlaceholder: {
-        backgroundColor: COLORS.primary,
+        width: '100%',
+        height: '100%',
+        borderRadius: 31,
         justifyContent: 'center',
         alignItems: 'center',
     },
@@ -97,10 +106,15 @@ const styles = StyleSheet.create({
     },
     addIconContainer: {
         position: 'absolute',
-        bottom: -2,
-        right: -2,
-        backgroundColor: COLORS.white,
+        bottom: 0,
+        right: 0,
+        width: 24,
+        height: 24,
         borderRadius: 12,
+        backgroundColor: COLORS.white,
+        justifyContent: 'center',
+        alignItems: 'center',
+        ...SHADOWS.light,
     },
     userName: {
         fontSize: 12,

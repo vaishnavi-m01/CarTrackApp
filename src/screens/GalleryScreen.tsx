@@ -18,13 +18,17 @@ import * as ImagePicker from 'expo-image-picker';
 import { Video, ResizeMode } from 'expo-av';
 import { COLORS, SIZES, SHADOWS } from '../constants/theme';
 import { useApp } from '../context/AppContext';
+import { useAuth } from '../context/AuthContext';
+import apiClient from '../api/apiClient';
 import { GalleryAlbum } from '../types/Gallery';
 import { MediaItem } from '../types/Community';
 
 const { width, height } = Dimensions.get('window');
 
 export default function GalleryScreen({ navigation }: { navigation: any }) {
-    const { galleryAlbums, createGalleryAlbum, addMediaToGallery } = useApp();
+    const { user } = useAuth();
+    const [galleryAlbums, setGalleryAlbums] = useState<GalleryAlbum[]>([]);
+    const [isLoading, setIsLoading] = useState(true);
     const [viewerVisible, setViewerVisible] = useState(false);
     const [uploadModalVisible, setUploadModalVisible] = useState(false);
     const [createAlbumModalVisible, setCreateAlbumModalVisible] = useState(false);
@@ -33,8 +37,102 @@ export default function GalleryScreen({ navigation }: { navigation: any }) {
     const [activeMedia, setActiveMedia] = useState<MediaItem[]>([]);
     const [activeIndex, setActiveIndex] = useState(0);
 
+    React.useEffect(() => {
+        if (user) {
+            fetchGalleryAlbums();
+        }
+    }, [user]);
+
+    const fetchGalleryAlbums = async () => {
+        setIsLoading(true);
+        try {
+            const response = await apiClient.get(`/gallery/${user?.id}`);
+            const data = response.data || [];
+
+            const mappedAlbums: GalleryAlbum[] = data.map((album: any) => ({
+                id: album.id,
+                title: album.title,
+                createdAt: album.createdAt,
+                media: (album.galleryMedia || []).map((m: any) => ({
+                    id: m.id,
+                    type: m.type || 'image',
+                    uri: m.mediaUrl,
+                    aspectRatio: m.aspectRatio || 1
+                }))
+            }));
+
+            setGalleryAlbums(mappedAlbums);
+        } catch (error) {
+            console.error('Error fetching gallery albums:', error);
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
     const handleAddPhoto = () => {
         setUploadModalVisible(true);
+    };
+
+    const createGalleryAlbum = async (title: string) => {
+        if (!user) return;
+        try {
+            const response = await apiClient.post('/gallery', {
+                userId: user.id,
+                title
+            });
+            const newAlbum = {
+                id: response.data.id,
+                title: response.data.title,
+                createdAt: response.data.createdAt || new Date().toISOString(),
+                media: []
+            };
+            setGalleryAlbums(prev => [...prev, newAlbum]);
+        } catch (error) {
+            console.error('Error creating gallery album:', error);
+        }
+    };
+
+    const addMediaToGallery = async (albumId: string | number, mediaFiles: MediaItem[]) => {
+        if (!user) return;
+        try {
+            for (const media of mediaFiles) {
+                const formData = new FormData();
+                const mediaData = JSON.stringify({
+                    galleryId: albumId,
+                    type: media.type,
+                    aspectRatio: media.aspectRatio || 1
+                });
+
+                formData.append('data', mediaData);
+
+                const name = media.uri.split('/').pop() || 'upload.jpg';
+                const type = media.type === 'video' ? 'video/mp4' : 'image/jpeg';
+
+                formData.append('file', {
+                    uri: media.uri,
+                    name,
+                    type,
+                } as any);
+
+                await apiClient.post('/gallery-media', formData, {
+                    headers: { 'Content-Type': 'multipart/form-data' }
+                });
+            }
+
+            // Refresh albums
+            await fetchGalleryAlbums();
+
+            // Update selected album in state if it's currently open
+            if (selectedAlbum && selectedAlbum.id === albumId) {
+                const updatedAlbum = galleryAlbums.find(a => a.id === albumId);
+                if (updatedAlbum) setSelectedAlbum(updatedAlbum);
+            }
+
+            Alert.alert('Success', 'Media added to gallery!');
+        } catch (error) {
+            console.error('Error adding media to gallery:', error);
+            Alert.alert('Error', 'Failed to add media to gallery');
+        }
     };
 
     const handleCreateAlbum = () => {

@@ -3,9 +3,17 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import apiClient from '../api/apiClient';
 
 interface User {
-    id: string;
+    id: string | number;
     name: string;
+    username?: string;
     email: string;
+    profilePicUrl?: string;
+    bio?: string;
+    phone?: string;
+    isPrivate?: boolean;
+    followersCount?: number;
+    followingCount?: number;
+    garageCount?: number;
     following: string[];
 }
 
@@ -20,6 +28,7 @@ interface AuthContextType {
     logout: () => Promise<void>;
     followUser: (userId: string) => Promise<void>;
     unfollowUser: (userId: string) => Promise<void>;
+    updateUser: (updates: Partial<User>) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -46,11 +55,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             const userData = await AsyncStorage.getItem(STORAGE_KEYS.USER);
             if (userData) {
                 const parsedUser = JSON.parse(userData);
-                // Load following separately or from user data if it was saved there
                 const followingData = await AsyncStorage.getItem(STORAGE_KEYS.FOLLOWING);
                 const following = followingData ? JSON.parse(followingData) : (parsedUser.following || []);
 
-                setUser({ ...parsedUser, following });
+                const finalUser = {
+                    ...parsedUser,
+                    name: parsedUser.name || parsedUser.username || 'User',
+                    following
+                };
+                setUser(finalUser);
             }
         } catch (error) {
             console.error('Error checking login status:', error);
@@ -84,6 +97,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
                 const userToStore = {
                     ...userData,
+                    name: userData.name || userData.username || 'User',
                     following
                 };
 
@@ -109,21 +123,48 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
     };
 
-    const followUser = async (userId: string) => {
+    const followUser = async (userId: string | number) => {
         if (!user) return;
-        const newFollowing = [...user.following, userId];
-        const updatedUser = { ...user, following: newFollowing };
-        setUser(updatedUser);
-        await AsyncStorage.setItem(STORAGE_KEYS.FOLLOWING, JSON.stringify(newFollowing));
-        await AsyncStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(updatedUser));
+        try {
+            await apiClient.post(`users/${user.id}/follow/${userId}`);
+            // Optimistically update counts
+            const newFollowing = [...user.following, String(userId)];
+            const updatedUser = {
+                ...user,
+                following: newFollowing,
+                followingCount: (user.followingCount || 0) + 1
+            };
+            setUser(updatedUser);
+            await AsyncStorage.setItem(STORAGE_KEYS.FOLLOWING, JSON.stringify(newFollowing));
+            await AsyncStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(updatedUser));
+        } catch (error) {
+            console.error('Error following user:', error);
+        }
     };
 
-    const unfollowUser = async (userId: string) => {
+    const unfollowUser = async (userId: string | number) => {
         if (!user) return;
-        const newFollowing = user.following.filter(id => id !== userId);
-        const updatedUser = { ...user, following: newFollowing };
+        try {
+            await apiClient.post(`users/${user.id}/unfollow/${userId}`);
+            // Optimistically update counts
+            const newFollowing = user.following.filter(id => id !== String(userId));
+            const updatedUser = {
+                ...user,
+                following: newFollowing,
+                followingCount: Math.max(0, (user.followingCount || 0) - 1)
+            };
+            setUser(updatedUser);
+            await AsyncStorage.setItem(STORAGE_KEYS.FOLLOWING, JSON.stringify(newFollowing));
+            await AsyncStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(updatedUser));
+        } catch (error) {
+            console.error('Error unfollowing user:', error);
+        }
+    };
+
+    const updateUser = async (updates: Partial<User>) => {
+        if (!user) return;
+        const updatedUser = { ...user, ...updates };
         setUser(updatedUser);
-        await AsyncStorage.setItem(STORAGE_KEYS.FOLLOWING, JSON.stringify(newFollowing));
         await AsyncStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(updatedUser));
     };
 
@@ -138,6 +179,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             logout,
             followUser,
             unfollowUser,
+            updateUser,
         }}>
             {children}
         </AuthContext.Provider>

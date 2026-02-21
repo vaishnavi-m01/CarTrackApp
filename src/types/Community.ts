@@ -1,45 +1,83 @@
 export interface MediaItem {
-    id: string;
+    id: string | number;
+    postId?: number;
+    mediaUrl?: string;
+    uri?: string;
     type: 'image' | 'video';
-    uri: string;
-    thumbnail?: string; // For videos
-    aspectRatio?: number; // 1: 1:1, 0.8: 4:5, 1.91: Landscape, 0: Original/Auto
-    resizeMode?: 'cover' | 'contain';
+    aspectRatio?: number;
+    trimStart?: number;
+    trimEnd?: number;
+    createdAt?: string;
+    updatedAt?: string;
 }
 
 export interface Comment {
-    id: string;
-    userId: string;
+    id: string | number;
+    userId: number;
     userName: string;
     userAvatar?: string;
     content: string;
-    timestamp: Date;
+    timestamp: string | Date;
     likes: number;
 }
 
 export interface CommunityPost {
-    id: string;
-    userId: string;
+    id: string | number;
+    userId: number;
     userName: string;
     userAvatar?: string;
+    user?: {
+        id: number;
+        username: string;
+        profilePicUrl?: string;
+    };
     content: string;
     media: MediaItem[];
-    timestamp: Date;
+    createdAt: string | Date;
     likes: number;
+    likesCount?: number;
     likedByUser: boolean;
     comments: Comment[];
     commentCount: number;
+    commentsCount?: number;
     views: number;
-    category: 'feed' | 'trending' | 'following';
+    viewsCount?: number;
+    isSaved: boolean;
+    savesCount?: number;
+    sharesCount?: number;
+    category?: 'feed' | 'trending' | 'following';
     location?: string;
-    vehicleInfo?: string;
-    tags?: string[];
+    feeling?: string;
+    allowComments: boolean;
+    isPublic: boolean;
+    vehicleId?: number;
     isVerified?: boolean;
+    tags?: string | string[];
 }
 
 export interface CreatePostInput {
+    id?: number;
     content: string;
-    media: MediaItem[];
     location?: string;
-    tags?: string[];
+    feeling?: string;
+    allowComments: boolean;
+    isPublic: boolean;
+    userId: number;
+    vehicleId?: number;
+    tags?: string;
+}
+
+export interface NewsCategory {
+    id: number;
+    name: string;
+}
+
+export interface NewsHighlight {
+    id: number;
+    categoryId: number;
+    badgeText?: string;
+    title: string;
+    source?: string;
+    description: string;
+    isTrending: boolean;
 }

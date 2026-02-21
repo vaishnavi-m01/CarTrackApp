@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
     View,
     Text,
@@ -6,11 +6,11 @@ import {
     TouchableOpacity,
     StyleSheet,
     TextInput,
-    Alert,
     Keyboard,
     KeyboardAvoidingView,
     Platform,
     ActivityIndicator,
+    ToastAndroid,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -18,25 +18,34 @@ import { Ionicons } from '@expo/vector-icons';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { COLORS, SIZES, SHADOWS } from '../constants/theme';
 import { useApp } from '../context/AppContext';
+import apiClient from '../api/apiClient';
 
-export default function AddExpenseScreen({ navigation }: { navigation: any }) {
-    const { vehicles, addExpense, AndroidToast } = useApp();
+interface Category {
+    id: number;
+    name: string;
+}
+
+export default function AddExpenseScreen({ navigation, route }: { navigation: any, route?: any }) {
+    const { vehicles, fetchExpenses } = useApp();
+    const expense = route?.params?.expense;
+    const isEdit = !!expense;
     const insets = useSafeAreaInsets();
 
-    const [selectedVehicleId, setSelectedVehicleId] = useState(vehicles[0]?.id || '');
-    const [type, setType] = useState('Service');
-    const [amount, setAmount] = useState('');
-    const [note, setNote] = useState('');
-    const [date, setDate] = useState(new Date());
+    const [selectedVehicleId, setSelectedVehicleId] = useState(expense?.vehicleId || vehicles[0]?.id || '');
+    const [categories, setCategories] = useState<Category[]>([]);
+    const [selectedCategoryId, setSelectedCategoryId] = useState<number | null>(expense?.categoryId || null);
+    const [amount, setAmount] = useState(expense?.amount ? expense.amount.toString() : '');
+    const [note, setNote] = useState(expense?.note || '');
+    const [date, setDate] = useState(expense?.date ? new Date(expense.date) : new Date());
     const [showDatePicker, setShowDatePicker] = useState(false);
 
-    const expenseTypes = ['Service', 'Repair', 'Insurance', 'Tax', 'Other'];
-
     const [isSubmitting, setIsSubmitting] = useState(false);
+    const [isLoadingCategories, setIsLoadingCategories] = useState(true);
     const [isVehicleDropdownOpen, setIsVehicleDropdownOpen] = useState(false);
     const [isKeyboardVisible, setIsKeyboardVisible] = useState(false);
 
-    React.useEffect(() => {
+    useEffect(() => {
+        fetchCategories();
         const showSubscription = Keyboard.addListener('keyboardDidShow', () => setIsKeyboardVisible(true));
         const hideSubscription = Keyboard.addListener('keyboardDidHide', () => setIsKeyboardVisible(false));
 
@@ -46,57 +55,98 @@ export default function AddExpenseScreen({ navigation }: { navigation: any }) {
         };
     }, []);
 
-    const handleSubmit = () => {
+    const fetchCategories = async () => {
+        try {
+            const response = await apiClient.get('/expense-categories');
+            setCategories(response.data);
+            if (!isEdit && response.data.length > 0) {
+                // Pre-select first category if not editing
+                setSelectedCategoryId(response.data[0].id);
+            }
+        } catch (error) {
+            console.error('Error fetching categories:', error);
+            if (Platform.OS === 'android') {
+                ToastAndroid.show('Failed to load expense categories', ToastAndroid.SHORT);
+            }
+        } finally {
+            setIsLoadingCategories(false);
+        }
+    };
+
+    const handleSubmit = async () => {
         if (!selectedVehicleId) {
-            Alert.alert('Error', 'Please select a vehicle');
+            if (Platform.OS === 'android') {
+                ToastAndroid.show('Please select a vehicle', ToastAndroid.SHORT);
+            }
+            return;
+        }
+        if (!selectedCategoryId) {
+            if (Platform.OS === 'android') {
+                ToastAndroid.show('Please select a category', ToastAndroid.SHORT);
+            }
             return;
         }
         const amt = parseFloat(amount.replace(/,/g, ''));
         if (!amount || isNaN(amt) || amt <= 0) {
-            Alert.alert('Error', 'Please enter a valid amount');
+            if (Platform.OS === 'android') {
+                ToastAndroid.show('Please enter a valid amount', ToastAndroid.SHORT);
+            }
             return;
         }
 
         setIsSubmitting(true);
-        const vehicle = vehicles.find(v => v.id === selectedVehicleId);
+        try {
+            const payload = {
+                vehicleId: parseInt(selectedVehicleId),
+                categoryId: selectedCategoryId,
+                amount: amt,
+                date: date.toISOString().split('T')[0], // YYYY-MM-DD
+                note: note.trim()
+            };
 
-        addExpense({
-            type: type as any,
-            amount: amt,
-            date: date.toISOString(),
-            vehicleId: selectedVehicleId,
-            vehicleName: vehicle ? `${vehicle.brand} ${vehicle.model}` : 'Unknown',
-            note,
-            icon: getIconForType(type),
-            color: getColorForType(type)
-        });
+            if (isEdit) {
+                await apiClient.put(`/expenses/${expense.id}`, payload);
+                if (Platform.OS === 'android') {
+                    ToastAndroid.show('Expense updated successfully!', ToastAndroid.LONG);
+                }
+            } else {
+                await apiClient.post('/expenses', payload);
+                if (Platform.OS === 'android') {
+                    ToastAndroid.show('Expense added successfully!', ToastAndroid.LONG);
+                }
+            }
 
-        AndroidToast('Expense added successfully!');
+            await fetchExpenses(); // Refresh global list
 
-        // Give time for user to see the toast on this screen
-        setTimeout(() => {
             navigation.goBack();
-        }, 1500);
-    };
-
-    const getIconForType = (t: string) => {
-        switch (t) {
-            case 'Service': return 'build';
-            case 'Repair': return 'hammer';
-            case 'Insurance': return 'shield-checkmark';
-            case 'Tax': return 'document-text';
-            default: return 'wallet';
+        } catch (error) {
+            console.error('Error saving expense:', error);
+            if (Platform.OS === 'android') {
+                ToastAndroid.show('Failed to save expense', ToastAndroid.SHORT);
+            }
+        } finally {
+            setIsSubmitting(false);
         }
     };
 
-    const getColorForType = (t: string) => {
-        switch (t) {
-            case 'Service': return COLORS.warning;
-            case 'Repair': return COLORS.danger;
-            case 'Insurance': return COLORS.success;
-            case 'Tax': return COLORS.info;
-            default: return COLORS.gray;
-        }
+    const getIconForCategory = (name: string) => {
+        const n = name.toLowerCase();
+        if (n.includes('service')) return 'build';
+        if (n.includes('repair')) return 'hammer';
+        if (n.includes('insurance')) return 'shield-checkmark';
+        if (n.includes('tax') || n.includes('toll')) return 'document-text';
+        if (n.includes('fuel')) return 'water';
+        return 'wallet';
+    };
+
+    const getColorForCategory = (name: string) => {
+        const n = name.toLowerCase();
+        if (n.includes('service')) return COLORS.warning;
+        if (n.includes('repair')) return COLORS.danger;
+        if (n.includes('insurance')) return COLORS.success;
+        if (n.includes('tax') || n.includes('toll')) return COLORS.info;
+        if (n.includes('fuel')) return COLORS.primary;
+        return COLORS.gray;
     };
 
     const onChangeDate = (event: any, selectedDate?: Date) => {
@@ -190,27 +240,51 @@ export default function AddExpenseScreen({ navigation }: { navigation: any }) {
                         )}
                     </View>
 
-                    {/* Expense Type */}
+                    {/* Expense Category */}
                     <View style={styles.inputGroup}>
-                        <Text style={styles.label}>Expense Category</Text>
-                        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
-                            {expenseTypes.map((t) => (
-                                <TouchableOpacity
-                                    key={t}
-                                    style={[
-                                        styles.typeChip,
-                                        type === t ? styles.typeChipActive : styles.typeChipInactive
-                                    ]}
-                                    onPress={() => setType(t)}
-                                >
-                                    <Ionicons name={getIconForType(t) as any} size={16} color={type === t ? COLORS.white : COLORS.primary} style={{ marginRight: 6 }} />
-                                    <Text style={[
-                                        styles.typeChipText,
-                                        type === t && styles.typeChipTextActive
-                                    ]}>{t}</Text>
-                                </TouchableOpacity>
-                            ))}
+                        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+                            <Text style={styles.label}>
+                                Expense Category <Text style={styles.requiredStar}>*</Text>
+                            </Text>
                         </View>
+
+                        {/* Redirection Notice */}
+                        <View style={styles.noticeBox}>
+                            <Ionicons name="information-circle-outline" size={18} color={COLORS.primary} />
+                            <Text style={styles.noticeText}>
+                                For Fuel or Service records, please use the specialized forms in the Maintenance section for better tracking.
+                            </Text>
+                        </View>
+
+                        {isLoadingCategories ? (
+                            <ActivityIndicator size="small" color={COLORS.primary} style={{ alignSelf: 'flex-start', marginVertical: 10 }} />
+                        ) : (
+                            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
+                                {categories
+                                    .filter(cat => !['fuel', 'service'].includes(cat.name.toLowerCase()))
+                                    .map((cat) => (
+                                        <TouchableOpacity
+                                            key={cat.id}
+                                            style={[
+                                                styles.typeChip,
+                                                selectedCategoryId === cat.id ? styles.typeChipActive : styles.typeChipInactive
+                                            ]}
+                                            onPress={() => setSelectedCategoryId(cat.id)}
+                                        >
+                                            <Ionicons
+                                                name={getIconForCategory(cat.name) as any}
+                                                size={16}
+                                                color={selectedCategoryId === cat.id ? COLORS.white : COLORS.primary}
+                                                style={{ marginRight: 6 }}
+                                            />
+                                            <Text style={[
+                                                styles.typeChipText,
+                                                selectedCategoryId === cat.id && styles.typeChipTextActive
+                                            ]}>{cat.name}</Text>
+                                        </TouchableOpacity>
+                                    ))}
+                            </View>
+                        )}
                     </View>
 
                     {/* Amount */}
@@ -308,9 +382,11 @@ const styles = StyleSheet.create({
     container: { flex: 1, backgroundColor: COLORS.background },
     content: { padding: SIZES.padding, paddingTop: 10 },
     inputGroup: { marginBottom: 12 },
-    label: { fontSize: 14, fontWeight: 'bold', color: COLORS.text, marginBottom: 6, marginTop: 4 },
+    label: { fontSize: 14, fontWeight: 'bold', color: COLORS.text, marginBottom: 0, marginTop: 4 },
     input: { backgroundColor: COLORS.white, borderRadius: 12, padding: 14, fontSize: 15, color: COLORS.text, borderWidth: 1, borderColor: '#e2e8f0' },
     requiredStar: { color: COLORS.danger, fontWeight: 'bold' },
+    noticeBox: { flexDirection: 'row', backgroundColor: COLORS.primary + '10', padding: 10, borderRadius: 10, marginBottom: 12, alignItems: 'center', gap: 8, borderWidth: 1, borderColor: COLORS.primary + '20' },
+    noticeText: { fontSize: 13, color: COLORS.text, flex: 1, lineHeight: 18 },
     typeChip: { flexDirection: 'row', alignItems: 'center', paddingVertical: 10, paddingHorizontal: 16, borderRadius: 20, borderWidth: 1, borderColor: '#e2e8f0' },
     typeChipInactive: { backgroundColor: COLORS.white },
     typeChipActive: { backgroundColor: COLORS.primary, borderColor: COLORS.primary },

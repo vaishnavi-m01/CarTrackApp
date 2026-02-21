@@ -6,7 +6,6 @@ import {
     TouchableOpacity,
     StyleSheet,
     TextInput,
-    Alert,
     Image,
     KeyboardAvoidingView,
     Platform,
@@ -160,7 +159,9 @@ export default function AddVehicleScreen({ navigation, route }: { navigation: an
 
         } catch (error) {
             console.error('Error fetching metadata:', error);
-            Alert.alert('Error', 'Failed to load vehicle options');
+            if (Platform.OS === 'android') {
+                ToastAndroid.show('Failed to load vehicle options', ToastAndroid.SHORT);
+            }
         } finally {
             setIsLoading(false);
         }
@@ -182,7 +183,9 @@ export default function AddVehicleScreen({ navigation, route }: { navigation: an
     const takePhoto = async () => {
         const { status } = await ImagePicker.requestCameraPermissionsAsync();
         if (status !== 'granted') {
-            Alert.alert('Permission Denied', 'Camera permission is required to take photos');
+            if (Platform.OS === 'android') {
+                ToastAndroid.show('Camera permission is required to take photos', ToastAndroid.SHORT);
+            }
             return;
         }
 
@@ -199,7 +202,9 @@ export default function AddVehicleScreen({ navigation, route }: { navigation: an
 
     const handleSubmit = async () => {
         if (!formData.brand || !formData.model || !formData.registration || !formData.vehicleName || !formData.mileage) {
-            Alert.alert('Error', 'Please fill in all required fields (marked with *)');
+            if (Platform.OS === 'android') {
+                ToastAndroid.show('Please fill in all required fields (marked with *)', ToastAndroid.SHORT);
+            }
             return;
         }
 
@@ -262,15 +267,15 @@ export default function AddVehicleScreen({ navigation, route }: { navigation: an
 
                 if (Platform.OS === 'android') {
                     ToastAndroid.show('Vehicle added successfully!', ToastAndroid.LONG);
-                } else {
-                    Alert.alert('Success', 'Vehicle added successfully!');
                 }
                 navigation.goBack();
             }
         } catch (error: any) {
             console.error('Error adding vehicle:', error);
             const msg = error.response?.data?.message || 'Failed to save vehicle';
-            Alert.alert('Error', msg);
+            if (Platform.OS === 'android') {
+                ToastAndroid.show(msg, ToastAndroid.SHORT);
+            }
         } finally {
             setIsSubmitting(false);
         }

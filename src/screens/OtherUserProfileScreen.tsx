@@ -17,6 +17,8 @@ import { StatusBar } from 'expo-status-bar';
 import { COLORS, SIZES, SHADOWS } from '../constants/theme';
 import { useApp } from '../context/AppContext';
 import { useAuth } from '../context/AuthContext';
+import apiClient from '../api/apiClient';
+import { CommunityPost } from '../types/Community';
 import { StackScreenProps } from '@react-navigation/stack';
 import { RootStackParamList } from '../navigation/MainNavigator';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -29,66 +31,189 @@ type Props = StackScreenProps<RootStackParamList, 'OtherUserProfile'>;
 
 export default function OtherUserProfileScreen({ route, navigation }: Props) {
     const { userId, userName } = route.params;
-    const { vehicles, communityPosts, wishlist, toggleWishlist, togglePostLike } = useApp();
+    const { vehicles, wishlist, toggleWishlist, fetchWishlist } = useApp();
     const { user, followUser, unfollowUser } = useAuth();
     const insets = useSafeAreaInsets();
 
+    const [userPosts, setUserPosts] = useState<CommunityPost[]>([]);
+    const [isLoading, setIsLoading] = useState(true);
+
     const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
     const [showSuggestions, setShowSuggestions] = useState(false);
-    const isFollowing = user?.following.includes(userId);
+    const [otherUser, setOtherUser] = useState<any>(null);
+    const [followStatus, setFollowStatus] = useState<'PENDING' | 'ACCEPTED' | 'NONE'>('NONE');
+    const [suggestedUsers, setSuggestedUsers] = useState<any[]>([]);
+    const isFollowing = followStatus === 'ACCEPTED';
 
     // Data filtering
-    const userPosts = communityPosts.filter(p => p.userId === userId);
-    const userVehicles = vehicles.filter(v => v.ownerId === userId);
+    const userVehicles = vehicles.filter(v => String(v.ownerId) === String(userId));
 
-    const suggestedUsers = React.useMemo(() => {
-        const uniqueUsers = new Map<string, { userId: string, userName: string, userAvatar?: string, reason: string }>();
-        const myBrands = new Set(vehicles.filter(v => v.ownerId === user?.id).map(v => v.brand.toLowerCase()));
+    React.useEffect(() => {
+        fetchUserContent();
+        fetchOtherUserProfile();
+        if (user) {
+            fetchRelationship();
+            fetchSuggestedUsers();
+        }
+    }, [userId, user?.id]);
 
-        communityPosts.forEach(post => {
-            if (
-                post.userId !== user?.id &&                     // Not me
-                post.userId !== userId &&                       // Not this profile user
-                !user?.following.includes(post.userId) &&       // Not already followed
-                !uniqueUsers.has(post.userId)                   // Not already in map
-            ) {
-                // Smart Reason Logic
-                let reason = "Popular in Community";
-                const sugUserVehicles = vehicles.filter(v => v.ownerId === post.userId);
-                const sharedBrand = sugUserVehicles.find(v => myBrands.has(v.brand.toLowerCase()));
+    const fetchOtherUserProfile = async () => {
+        try {
+            const response = await apiClient.get(`/users/${userId}`);
+            setOtherUser(response.data);
+        } catch (error) {
+            console.error('Error fetching other user profile:', error);
+        }
+    };
 
-                if (sharedBrand) {
-                    reason = `Also owns a ${sharedBrand.brand}`;
-                } else if (communityPosts.filter(p => p.userId === post.userId).length > 2) {
-                    reason = "Active in Community";
-                }
+    const fetchRelationship = async () => {
+        if (!user) return;
+        try {
+            const response = await apiClient.get(`/users/${user.id}/relationship/${userId}`);
+            setFollowStatus(response.data.status);
+        } catch (error) {
+            console.error('Error fetching relationship status:', error);
+        }
+    };
 
-                uniqueUsers.set(post.userId, {
+    const fetchSuggestedUsers = async () => {
+        if (!user) return;
+        try {
+            const response = await apiClient.get(`/users/${user.id}/suggestions`);
+            setSuggestedUsers(response.data.map((u: any) => ({
+                userId: u.id,
+                userName: u.username,
+                userAvatar: u.profilePicUrl,
+                reason: 'Suggested for you'
+            })));
+        } catch (error) {
+            console.error('Error fetching suggested users:', error);
+        }
+    };
+
+    const fetchUserContent = async () => {
+        setIsLoading(true);
+        try {
+            const response = await apiClient.get(`/post?userId=${userId}`);
+            const data = response.data || [];
+
+            const mappedPosts: CommunityPost[] = data.map((dto: any) => {
+                if (!dto) return null;
+                const post = dto.post || dto;
+                if (!post || typeof post !== 'object' || !post.id) return null;
+                return {
+                    id: post.id,
                     userId: post.userId,
-                    userName: post.userName,
-                    userAvatar: post.userAvatar,
-                    reason: reason
-                });
+                    userName: post.user?.username || `User ${post.userId}`,
+                    userAvatar: post.user?.profilePicUrl,
+                    user: post.user,
+                    content: post.content,
+                    media: (post.media || []).map((m: any) => ({
+                        id: m.id,
+                        postId: m.postId,
+                        mediaUrl: m.mediaUrl,
+                        type: m.type || 'image',
+                        aspectRatio: m.aspectRatio || 1
+                    })),
+                    createdAt: post.createdAt,
+                    likes: post.likesCount || 0,
+                    likesCount: post.likesCount,
+                    likedByUser: dto.likedByUser || post.likedByUser || false,
+                    isSaved: dto.isSaved || dto.saved || post.saved || false,
+                    comments: (post.comments || []).map((c: any) => ({
+                        id: c.id,
+                        userId: c.userId,
+                        userName: c.userName || 'Unknown',
+                        content: c.content,
+                        timestamp: c.createdAt,
+                        likes: 0
+                    })),
+                    commentCount: post.commentsCount || 0,
+                    commentsCount: post.commentsCount,
+                    views: post.viewsCount || 0,
+                    viewsCount: post.viewsCount,
+                    savesCount: post.savesCount,
+                    location: post.location,
+                    feeling: post.feeling,
+                    allowComments: post.allowComments ?? true,
+                    isPublic: post.isPublic ?? true,
+                    vehicleId: post.vehicleId
+                };
+            }).filter((p: any) => p !== null);
+
+            setUserPosts(mappedPosts);
+        } catch (error) {
+            console.error('Error fetching user posts:', error);
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
+    const togglePostLike = async (postId: string | number) => {
+        if (!user) return;
+        const postToToggle = userPosts.find(p => p.id === postId);
+        if (!postToToggle) return;
+        const willBeLiked = !postToToggle.likedByUser;
+
+        setUserPosts((prev) => prev.map(post => {
+            if (post.id === postId) {
+                return {
+                    ...post,
+                    likedByUser: willBeLiked,
+                    likes: willBeLiked ? (post.likes + 1) : Math.max(0, post.likes - 1)
+                };
             }
-        });
-        return Array.from(uniqueUsers.values()).slice(0, 10); // Limit to 10 suggestions
-    }, [communityPosts, vehicles, user?.id, userId, user?.following]);
+            return post;
+        }));
+
+        try {
+            await apiClient.post(`/post/${postId}/like?userId=${user.id}`);
+        } catch (error) {
+            console.error('Error toggling like:', error);
+        }
+    };
+
+    const togglePostSave = async (postId: string | number) => {
+        if (!user) return;
+        try {
+            await apiClient.post(`/post/${postId}/save?userId=${user.id}`);
+            await fetchWishlist();
+        } catch (error) {
+            console.error('Error toggling post save:', error);
+        }
+    };
+
 
     const toggleSuggestions = () => {
         LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
         setShowSuggestions(!showSuggestions);
     };
 
-    const handleFollowToggle = () => {
+    const handleFollowToggle = async () => {
+        if (!user) return;
         LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-        if (isFollowing) {
-            unfollowUser(userId);
-            setShowSuggestions(false);
-        } else {
-            followUser(userId);
-            if (suggestedUsers.length > 0) {
-                setShowSuggestions(true);
+
+        try {
+            if (isFollowing || followStatus === 'PENDING') {
+                await unfollowUser(userId);
+                setFollowStatus('NONE');
+                setShowSuggestions(false);
+            } else {
+                await followUser(userId);
+                // If the user being followed is private, status is PENDING
+                if (otherUser?.isPrivate) {
+                    setFollowStatus('PENDING');
+                } else {
+                    setFollowStatus('ACCEPTED');
+                    if (suggestedUsers.length > 0) {
+                        setShowSuggestions(true);
+                    }
+                }
             }
+            // Refresh counts
+            fetchOtherUserProfile();
+        } catch (error) {
+            console.error('Error toggling follow:', error);
         }
     };
 
@@ -124,15 +249,15 @@ export default function OtherUserProfileScreen({ route, navigation }: Props) {
 
                 <View style={styles.statsRow}>
                     <View style={styles.statItem}>
-                        <Text style={styles.statValue}>{userPosts.length}</Text>
+                        <Text style={styles.statValue}>{otherUser?.postsCount || userPosts.length}</Text>
                         <Text style={styles.statLabel}>Posts</Text>
                     </View>
                     <View style={styles.statItem}>
-                        <Text style={styles.statValue}>1.2k</Text>
+                        <Text style={styles.statValue}>{otherUser?.followersCount || 0}</Text>
                         <Text style={styles.statLabel}>Followers</Text>
                     </View>
                     <View style={styles.statItem}>
-                        <Text style={styles.statValue}>452</Text>
+                        <Text style={styles.statValue}>{otherUser?.followingCount || 0}</Text>
                         <Text style={styles.statLabel}>Following</Text>
                     </View>
                 </View>
@@ -144,7 +269,7 @@ export default function OtherUserProfileScreen({ route, navigation }: Props) {
                         activeOpacity={0.8}
                     >
                         <Text style={[styles.followBtnText, isFollowing && styles.followingBtnText]}>
-                            {isFollowing ? 'Following' : 'Follow'}
+                            {followStatus === 'ACCEPTED' ? 'Following' : followStatus === 'PENDING' ? 'Requested' : 'Follow'}
                         </Text>
                     </TouchableOpacity>
                     <TouchableOpacity
@@ -212,7 +337,7 @@ export default function OtherUserProfileScreen({ route, navigation }: Props) {
                                     style={styles.suggestionFollowBtn}
                                     onPress={() => {
                                         LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-                                        followUser(sUser.userId);
+                                        followUser(String(sUser.userId));
                                     }}
                                 >
                                     <Text style={styles.suggestionFollowText}>Follow</Text>
@@ -278,8 +403,8 @@ export default function OtherUserProfileScreen({ route, navigation }: Props) {
                         onComment={() => { }}
                         onShare={() => { }}
                         onImagePress={() => navigation.navigate('PostDetail', { initialPost: item, allPosts: userPosts })}
-                        isSaved={wishlist.includes(item.id)}
-                        onToggleSave={() => toggleWishlist(item.id)}
+                        isSaved={wishlist.includes(String(item.id))}
+                        onToggleSave={() => togglePostSave(item.id)}
                     />
                 </View>
             );
@@ -290,7 +415,7 @@ export default function OtherUserProfileScreen({ route, navigation }: Props) {
                 style={styles.gridItem}
                 onPress={() => navigation.navigate('PostDetail', { initialPost: item, allPosts: userPosts })}
             >
-                <Image source={{ uri: item.media[0].uri }} style={styles.gridImage} />
+                <Image source={{ uri: item.media?.[0]?.mediaUrl }} style={styles.gridImage} />
                 {item.media.length > 1 && (
                     <View style={styles.multiMediaBadge}>
                         <Ionicons name="copy" size={12} color={COLORS.white} />
@@ -306,7 +431,7 @@ export default function OtherUserProfileScreen({ route, navigation }: Props) {
             <FlatList
                 data={userPosts}
                 renderItem={renderPostItem}
-                keyExtractor={item => item.id}
+                keyExtractor={item => String(item.id)}
                 ListHeaderComponent={renderHeader}
                 numColumns={viewMode === 'grid' ? 3 : 1}
                 key={viewMode} // Trigger re-render on mode change

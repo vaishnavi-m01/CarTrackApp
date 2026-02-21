@@ -11,7 +11,10 @@ import {
     Animated,
     StatusBar,
     Alert,
-    ScrollView
+    ScrollView,
+    KeyboardAvoidingView,
+    Platform,
+    Keyboard,
 } from 'react-native';
 import { Video, ResizeMode } from 'expo-av';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -22,6 +25,7 @@ import { RouteProp } from '@react-navigation/native';
 import { RootStackParamList } from '../navigation/MainNavigator';
 import { useApp } from '../context/AppContext';
 import { useAuth } from '../context/AuthContext';
+import apiClient from '../api/apiClient';
 import { StoryGroup } from '../types/Story';
 
 const { width, height } = Dimensions.get('window');
@@ -55,18 +59,17 @@ interface StoryViewerScreenProps {
 }
 
 export default function StoryViewerScreen({ navigation, route }: StoryViewerScreenProps) {
-    const { storyGroup, allGroups, startIndex } = route.params;
+    const { storyGroup, allGroups, startIndex, onUpdateStoryLike } = route.params;
     const [isEditing, setIsEditing] = useState(false);
     const [isPaused, setIsPaused] = useState(false);
     const [editCaption, setEditCaption] = useState('');
-    const { markStoryAsViewed, deleteStory, editStory, getStoryGroups } = useApp();
     const { user } = useAuth();
+    const [localAllGroups, setLocalAllGroups] = useState<StoryGroup[]>(allGroups);
     const [currentGroupIndex, setCurrentGroupIndex] = useState(startIndex);
     const [currentStoryIndex, setCurrentStoryIndex] = useState(0);
     const progressAnims = useRef<Animated.Value[]>([]).current;
 
-    const liveGroups = getStoryGroups();
-    const currentGroup = liveGroups[currentGroupIndex] || allGroups[currentGroupIndex];
+    const currentGroup = localAllGroups[currentGroupIndex];
     const currentStory = currentGroup?.stories[currentStoryIndex];
 
     // Caption editing states (rich)
@@ -78,6 +81,18 @@ export default function StoryViewerScreen({ navigation, route }: StoryViewerScre
     const [isDragging, setIsDragging] = useState(false);
     const [showDeleteZone, setShowDeleteZone] = useState(false);
     const trashScale = useRef(new Animated.Value(1)).current;
+
+    // Viewers List states
+    const [viewers, setViewers] = useState<any[]>([]);
+    const [viewersSheetVisible, setViewersSheetVisible] = useState(false);
+    const [isViewersLoading, setIsViewersLoading] = useState(false);
+
+    // Likers List states
+    const [likers, setLikers] = useState<any[]>([]);
+    const [likersSheetVisible, setLikersSheetVisible] = useState(false);
+    const [isLikersLoading, setIsLikersLoading] = useState(false);
+
+    const isOwner = user && String(currentGroup?.userId) === String(user.id);
 
     // Initialize progress animations
     useEffect(() => {
@@ -94,6 +109,11 @@ export default function StoryViewerScreen({ navigation, route }: StoryViewerScre
 
         // Mark as viewed
         markStoryAsViewed(currentStory.id);
+
+        // Check if user liked it by calling the Likers API (overrides stale backend boolean)
+        if (user && !currentStory.isLikedFetched) {
+            checkIfUserLiked(currentStory.id);
+        }
 
         // Animate progress bar
         const animation = Animated.timing(progressAnims[currentStoryIndex], {
@@ -112,6 +132,100 @@ export default function StoryViewerScreen({ navigation, route }: StoryViewerScre
             animation.stop();
         };
     }, [currentStoryIndex, currentGroupIndex, isEditing, isPaused]);
+
+    const toggleLike = async (storyId: string | number) => {
+        if (!user) return;
+        const story = currentGroup.stories[currentStoryIndex];
+        const newIsLiked = !story.isLiked;
+        const newLikesCount = (story.likesCount || 0) + (newIsLiked ? 1 : -1);
+
+        // Optimistic UI update
+        setLocalAllGroups(prev => prev.map(group => ({
+            ...group,
+            stories: group.stories.map(s => s.id === storyId ? {
+                ...s,
+                isLiked: newIsLiked,
+                likesCount: newLikesCount
+            } : s)
+        })));
+        if (onUpdateStoryLike) {
+            onUpdateStoryLike(storyId, newIsLiked, newLikesCount);
+        }
+
+        try {
+            if (newIsLiked) {
+                await apiClient.post(`/story/${storyId}/like?userId=${user.id}`);
+            } else {
+                await apiClient.delete(`/story/${storyId}/like?userId=${user.id}`);
+            }
+        } catch (error) {
+            console.error('Error toggling like:', error);
+            // Rollback if failed
+            const revertedIsLiked = !newIsLiked;
+            const revertedLikesCount = newLikesCount + (!newIsLiked ? 1 : -1);
+            setLocalAllGroups(prev => prev.map(group => ({
+                ...group,
+                stories: group.stories.map(s => s.id === storyId ? {
+                    ...s,
+                    isLiked: revertedIsLiked,
+                    likesCount: revertedLikesCount
+                } : s)
+            })));
+            if (onUpdateStoryLike) {
+                onUpdateStoryLike(storyId, revertedIsLiked, revertedLikesCount);
+            }
+        }
+    };
+
+    const checkIfUserLiked = async (storyId: string | number) => {
+        try {
+            const response = await apiClient.get(`/story/${storyId}/likers`);
+            const likersList = response.data || [];
+            const hasLiked = likersList.some((liker: any) => String(liker.id) === String(user?.id));
+
+            setLocalAllGroups(prev => prev.map(group => ({
+                ...group,
+                stories: group.stories.map(s => {
+                    if (s.id === storyId) {
+                        if (onUpdateStoryLike && s.isLiked !== hasLiked) {
+                            onUpdateStoryLike(storyId, hasLiked, s.likesCount || 0);
+                        }
+                        return {
+                            ...s,
+                            isLiked: hasLiked,
+                            isLikedFetched: true
+                        };
+                    }
+                    return s;
+                })
+            })));
+        } catch (error) {
+            console.error('Error checking if user liked story:', error);
+            setLocalAllGroups(prev => prev.map(group => ({
+                ...group,
+                stories: group.stories.map(s => s.id === storyId ? {
+                    ...s,
+                    isLikedFetched: true
+                } : s)
+            })));
+        }
+    };
+
+    const handleSendReply = async () => {
+        if (!editCaption.trim() || !user) return;
+
+        try {
+            await apiClient.post(`/story/${currentStory.id}/comment?userId=${user.id}`, editCaption.trim(), {
+                headers: { 'Content-Type': 'text/plain' }
+            });
+            setEditCaption('');
+            setIsPaused(false);
+            Alert.alert('Success', 'Reply sent!');
+        } catch (error) {
+            console.error('Error sending reply:', error);
+            Alert.alert('Error', 'Failed to send reply');
+        }
+    };
 
     const handleNext = () => {
         // Check if there are more stories in current group
@@ -133,8 +247,77 @@ export default function StoryViewerScreen({ navigation, route }: StoryViewerScre
         } else if (currentGroupIndex > 0) {
             // Move to previous group
             setCurrentGroupIndex(currentGroupIndex - 1);
-            const prevGroup = allGroups[currentGroupIndex - 1];
+            const prevGroup = localAllGroups[currentGroupIndex - 1];
             setCurrentStoryIndex(prevGroup.stories.length - 1);
+        }
+    };
+
+    const markStoryAsViewed = async (storyId: string | number) => {
+        if (!user) return;
+        try {
+            await apiClient.post(`/story/${storyId}/view?userId=${user.id}`);
+            setLocalAllGroups(prev => prev.map(group => ({
+                ...group,
+                stories: group.stories.map(s => s.id === storyId ? { ...s, viewed: true } : s)
+            })));
+        } catch (error) {
+            console.error('Error marking story as viewed:', error);
+        }
+    };
+
+    const deleteStory = async (storyId: string | number) => {
+        try {
+            await apiClient.delete(`/story/${storyId}`);
+            setLocalAllGroups(prev => prev.map(group => ({
+                ...group,
+                stories: group.stories.filter(s => s.id !== storyId)
+            })).filter(group => group.stories.length > 0));
+        } catch (error) {
+            console.error('Error deleting story:', error);
+        }
+    };
+
+    const editStory = async (storyId: string | number, updates: any) => {
+        try {
+            await apiClient.put(`/story/${storyId}`, updates);
+            setLocalAllGroups(prev => prev.map(group => ({
+                ...group,
+                stories: group.stories.map(s => s.id === storyId ? { ...s, ...updates } : s)
+            })));
+        } catch (error) {
+            console.error('Error editing story:', error);
+        }
+    };
+
+    const fetchViewers = async (storyId: string | number) => {
+        setIsViewersLoading(true);
+        setIsPaused(true);
+        try {
+            const response = await apiClient.get(`/story/${storyId}/viewers`);
+            setViewers(response.data);
+            setViewersSheetVisible(true);
+        } catch (error) {
+            console.error('Error fetching story viewers:', error);
+            Alert.alert('Error', 'Unable to load viewer list');
+            setIsPaused(false);
+        } finally {
+            setIsViewersLoading(false);
+        }
+    };
+
+    const fetchLikers = async (storyId: string | number) => {
+        setIsLikersLoading(true);
+        setIsPaused(true);
+        try {
+            const response = await apiClient.get(`/story/${storyId}/likers`);
+            setLikers(response.data);
+            setLikersSheetVisible(true);
+        } catch (error) {
+            console.error('Error fetching story likers:', error);
+            Alert.alert('Error', 'Unable to load likers list');
+            setIsPaused(false);
+        } finally {
+            setIsLikersLoading(false);
         }
     };
 
@@ -349,7 +532,7 @@ export default function StoryViewerScreen({ navigation, route }: StoryViewerScre
                     </View>
                 </View>
                 <View style={styles.rightControls}>
-                    {user && currentGroup.userId === user.id && (
+                    {user && String(currentGroup.userId) === String(user.id) && (
                         <>
                             <TouchableOpacity onPress={handleEdit} style={styles.iconBtn}>
                                 <Ionicons name="create-outline" size={24} color={COLORS.white} />
@@ -601,6 +784,160 @@ export default function StoryViewerScreen({ navigation, route }: StoryViewerScre
                     </View>
                 )
             ) : null}
+
+            {/* Bottom Interaction Bar */}
+            {!isEditing && (
+                <KeyboardAvoidingView
+                    behavior={Platform.OS === 'ios' ? 'position' : 'padding'}
+                    keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}
+                    style={styles.keyboardAvoidingBottom}
+                >
+                    <View style={styles.bottomInteraction}>
+                        <View style={styles.replyContainer}>
+                            <TextInput
+                                style={styles.replyInput}
+                                placeholder="Send Message"
+                                placeholderTextColor="rgba(255,255,255,0.7)"
+                                value={isEditing ? '' : editCaption}
+                                onChangeText={setEditCaption}
+                                onFocus={() => {
+                                    setIsPaused(true);
+                                }}
+                                onBlur={() => setIsPaused(false)}
+                                returnKeyType="send"
+                                onSubmitEditing={handleSendReply}
+                            />
+                            {editCaption.trim().length > 0 && !isEditing && (
+                                <TouchableOpacity onPress={handleSendReply} style={styles.sendBtn}>
+                                    <Ionicons name="send" size={24} color={COLORS.white} />
+                                </TouchableOpacity>
+                            )}
+                        </View>
+
+                        <View style={styles.actionButtons}>
+                            <TouchableOpacity
+                                onPress={() => {
+                                    if (isOwner) {
+                                        fetchLikers(currentStory.id);
+                                    } else {
+                                        toggleLike(currentStory.id);
+                                    }
+                                }}
+                                style={styles.actionBtn}
+                            >
+                                <Ionicons
+                                    name={currentStory.isLiked ? "heart" : "heart-outline"}
+                                    size={30}
+                                    color={currentStory.isLiked ? COLORS.danger || "#FF3B30" : COLORS.white}
+                                />
+                            </TouchableOpacity>
+
+                            <TouchableOpacity style={styles.actionBtn}>
+                                <Ionicons name="paper-plane-outline" size={28} color={COLORS.white} />
+                            </TouchableOpacity>
+                        </View>
+                    </View>
+                </KeyboardAvoidingView>
+            )}
+
+            {/* Viewers Eye Icon (Floating Above Interaction Bar if Owner) */}
+            {user && String(currentGroup.userId) === String(user.id) && !isEditing && (
+                <TouchableOpacity
+                    style={[styles.viewersBtn, { bottom: 90 }]}
+                    onPress={() => fetchViewers(currentStory.id)}
+                >
+                    <View style={styles.viewersBtnContent}>
+                        <Ionicons name="eye-outline" size={24} color={COLORS.white} />
+                        <Text style={styles.viewersCountText}>{currentStory.viewsCount || 0}</Text>
+                    </View>
+                </TouchableOpacity>
+            )}
+
+            {/* Viewers Bottom Sheet */}
+            {viewersSheetVisible && (
+                <View style={[StyleSheet.absoluteFill, { zIndex: 1000 }]}>
+                    <TouchableOpacity
+                        style={styles.sheetBackdrop}
+                        activeOpacity={1}
+                        onPress={() => {
+                            setViewersSheetVisible(false);
+                            setIsPaused(false);
+                        }}
+                    />
+                    <Animated.View style={styles.viewersSheet}>
+                        <View style={styles.sheetHeader}>
+                            <View style={styles.sheetHandle} />
+                            <Text style={styles.sheetTitle}>Story Views</Text>
+                        </View>
+
+                        <ScrollView style={styles.viewersList}>
+                            {viewers.length > 0 ? (
+                                viewers.map((viewer, index) => (
+                                    <View key={index} style={styles.viewerItem}>
+                                        <View style={styles.viewerInfo}>
+                                            {viewer.profilePicUrl ? (
+                                                <Image source={{ uri: viewer.profilePicUrl }} style={styles.viewerAvatar} />
+                                            ) : (
+                                                <View style={[styles.viewerAvatar, styles.avatarPlaceholderSmall]}>
+                                                    <Text style={styles.viewerAvatarText}>{viewer.username.charAt(0).toUpperCase()}</Text>
+                                                </View>
+                                            )}
+                                            <Text style={styles.viewerName}>{viewer.username}</Text>
+                                        </View>
+                                    </View>
+                                ))
+                            ) : (
+                                <View style={styles.emptyViewers}>
+                                    <Text style={styles.emptyViewersText}>No viewers yet</Text>
+                                </View>
+                            )}
+                        </ScrollView>
+                    </Animated.View>
+                </View>
+            )}
+
+            {/* Likers Bottom Sheet */}
+            {likersSheetVisible && (
+                <View style={[StyleSheet.absoluteFill, { zIndex: 1000 }]}>
+                    <TouchableOpacity
+                        style={styles.sheetBackdrop}
+                        activeOpacity={1}
+                        onPress={() => {
+                            setLikersSheetVisible(false);
+                            setIsPaused(false);
+                        }}
+                    />
+                    <Animated.View style={styles.viewersSheet}>
+                        <View style={styles.sheetHeader}>
+                            <View style={styles.sheetHandle} />
+                            <Text style={styles.sheetTitle}>Story Likes</Text>
+                        </View>
+
+                        <ScrollView style={styles.viewersList}>
+                            {likers.length > 0 ? (
+                                likers.map((liker, index) => (
+                                    <View key={index} style={styles.viewerItem}>
+                                        <View style={styles.viewerInfo}>
+                                            {liker.profilePicUrl ? (
+                                                <Image source={{ uri: liker.profilePicUrl }} style={styles.viewerAvatar} />
+                                            ) : (
+                                                <View style={[styles.viewerAvatar, styles.avatarPlaceholderSmall]}>
+                                                    <Text style={styles.viewerAvatarText}>{liker.username.charAt(0).toUpperCase()}</Text>
+                                                </View>
+                                            )}
+                                            <Text style={styles.viewerName}>{liker.username}</Text>
+                                        </View>
+                                    </View>
+                                ))
+                            ) : (
+                                <View style={styles.emptyViewers}>
+                                    <Text style={styles.emptyViewersText}>No likes yet</Text>
+                                </View>
+                            )}
+                        </ScrollView>
+                    </Animated.View>
+                </View>
+            )}
         </View>
     );
 }
@@ -861,5 +1198,153 @@ const styles = StyleSheet.create({
         color: COLORS.white,
         fontSize: 18,
         fontWeight: 'bold',
+    },
+    keyboardAvoidingBottom: {
+        position: 'absolute',
+        left: 0,
+        right: 0,
+        bottom: 0,
+        zIndex: 100,
+    },
+    bottomInteraction: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        paddingHorizontal: 16,
+        paddingBottom: 30,
+        paddingTop: 10,
+    },
+    replyContainer: {
+        flex: 1,
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: 'rgba(255,255,255,0.2)',
+        borderRadius: 25,
+        paddingHorizontal: 15,
+        height: 44,
+        marginRight: 10,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.3)',
+    },
+    replyInput: {
+        flex: 1,
+        color: COLORS.white,
+        fontSize: 14,
+        height: '100%',
+    },
+    sendBtn: {
+        marginLeft: 8,
+    },
+    actionButtons: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 15,
+    },
+    actionBtn: {
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    actionCount: {
+        color: COLORS.white,
+        fontSize: 10,
+        fontWeight: 'bold',
+        marginTop: -5,
+    },
+    viewersBtn: {
+        position: 'absolute',
+        left: 0,
+        right: 0,
+        alignItems: 'center',
+        zIndex: 60,
+    },
+    viewersBtnContent: {
+        padding: 10,
+        justifyContent: 'center',
+        alignItems: 'center',
+        flexDirection: 'row',
+    },
+    viewersCountText: {
+        color: COLORS.white,
+        fontSize: 12,
+        fontWeight: 'bold',
+        marginLeft: 5,
+    },
+    sheetBackdrop: {
+        flex: 1,
+        backgroundColor: 'rgba(0,0,0,0.5)',
+    },
+    viewersSheet: {
+        position: 'absolute',
+        bottom: 0,
+        left: 0,
+        right: 0,
+        height: height * 0.6,
+        backgroundColor: COLORS.white,
+        borderTopLeftRadius: 20,
+        borderTopRightRadius: 20,
+        paddingTop: 12,
+    },
+    sheetHeader: {
+        alignItems: 'center',
+        paddingBottom: 15,
+        borderBottomWidth: 1,
+        borderBottomColor: '#f0f0f0',
+    },
+    sheetHandle: {
+        width: 40,
+        height: 4,
+        backgroundColor: '#DDDDDD',
+        borderRadius: 2,
+        marginBottom: 15,
+    },
+    sheetTitle: {
+        fontSize: 16,
+        fontWeight: 'bold',
+        color: COLORS.text,
+    },
+    viewersList: {
+        flex: 1,
+    },
+    viewerItem: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        paddingHorizontal: 20,
+        paddingVertical: 12,
+    },
+    viewerInfo: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 12,
+    },
+    viewerAvatar: {
+        width: 44,
+        height: 44,
+        borderRadius: 22,
+    },
+    avatarPlaceholderSmall: {
+        backgroundColor: COLORS.primary,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    viewerAvatarText: {
+        color: COLORS.white,
+        fontSize: 18,
+        fontWeight: 'bold',
+    },
+    viewerName: {
+        fontSize: 15,
+        fontWeight: '600',
+        color: COLORS.text,
+    },
+    emptyViewers: {
+        flex: 1,
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingTop: 100,
+    },
+    emptyViewersText: {
+        color: COLORS.textLight,
+        fontSize: 16,
     },
 });

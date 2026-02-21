@@ -1,10 +1,11 @@
 import React from 'react';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
-import { Platform, View, ActivityIndicator } from 'react-native';
+import { View, ActivityIndicator } from 'react-native';
 import { createStackNavigator } from '@react-navigation/stack';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { COLORS } from '../constants/theme';
+import { NavigatorScreenParams } from '@react-navigation/native';
 // import { useAuth } from '../context/AuthContext';
 
 // Auth Screens
@@ -50,7 +51,7 @@ import PostDetailScreen from '../screens/PostDetailScreen';
 import ReportsScreen from '../screens/ReportsScreen';
 import { StoryGroup } from '../types/Story';
 import { useAuth } from '../context/AuthContext';
-import { useApp } from '../context/AppContext';
+import { useApp, VehicleDocument } from '../context/AppContext';
 import { CommunityPost } from '../types/Community';
 import SplashScreen from '../screens/SplashScreen';
 
@@ -77,10 +78,10 @@ export type RootStackParamList = {
     Splash: undefined;
     Login: undefined;
     Register: undefined;
-    MainTabs: undefined;
+    MainTabs: NavigatorScreenParams<RootTabParamList> | undefined;
     VehicleDetails: { vehicle?: any; id?: string };
     Comparison: undefined;
-    LoanCalculator: undefined;
+    LoanCalculator: { amount?: string };
     AddVehicle: undefined;
     AddFuel: { vehicleId?: string; fuelLog?: any };
     AddExpense: undefined;
@@ -89,7 +90,13 @@ export type RootStackParamList = {
     Expenses: undefined;
     VehicleDocuments: { vehicleId: string };
     AddDocument: { vehicleId: string; document?: any };
-    ExpenseHistory: { vehicleId?: string };
+    ExpenseHistory: {
+        vehicleId?: string;
+        categoryId?: number;
+        startDate?: string;
+        endDate?: string;
+        period?: string;
+    };
     Gallery: { vehicleId?: string };
     Trips: { vehicleId?: string };
     AddTrip: { vehicleId?: string; trip?: any };
@@ -102,7 +109,12 @@ export type RootStackParamList = {
     Wishlist: undefined;
     CreatePost: undefined;
     AddStory: undefined;
-    StoryViewer: { storyGroup: StoryGroup; allGroups: StoryGroup[]; startIndex: number };
+    StoryViewer: {
+        storyGroup: StoryGroup;
+        allGroups: StoryGroup[];
+        startIndex: number;
+        onUpdateStoryLike?: (storyId: string | number, isLiked: boolean, likesCount: number) => void;
+    };
     News: undefined;
     NewsDetail: { news: any };
     Settings: undefined;
@@ -114,6 +126,7 @@ export type RootStackParamList = {
     CommunityNotifications: { filter: 'community' };
     OtherUserProfile: { userId: string; userName: string };
     Reports: { vehicleId?: string };
+    DocumentDetail: { document: VehicleDocument };
 };
 
 // Main Tab Navigator
@@ -316,6 +329,13 @@ export default function MainNavigator() {
                         name="Reports"
                         component={ReportsScreen}
                         options={{ title: 'Vehicle Analytics' }}
+                    />
+                    <Stack.Screen
+                        name="DocumentDetail"
+                        component={require('../screens/DocumentDetailScreen').default}
+                        options={({ route }: any) => ({
+                            title: route.params?.document?.title || 'Document Details'
+                        })}
                     />
                 </>
             )}

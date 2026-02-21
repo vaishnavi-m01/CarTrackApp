@@ -1,4 +1,4 @@
-﻿import React, { useState } from 'react';
+﻿import React, { useState, useCallback, useRef } from 'react';
 import {
     View,
     Text,
@@ -14,8 +14,11 @@ import {
     Keyboard,
     TouchableWithoutFeedback,
     Image,
+    ToastAndroid,
+    FlatList,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
+import apiClient from '../api/apiClient';
 
 // Keyboard avoiding behavior
 const keyboardBehavior = Platform.OS === 'ios' ? 'padding' : 'height';
@@ -25,10 +28,12 @@ import CommunityPostCard from '../components/CommunityPostCard';
 import CommentBottomSheet from '../components/CommentBottomSheet';
 import StoryList from '../components/StoryList';
 import { CommunityPost } from '../types/Community';
+import { Story, StoryGroup } from '../types/Story';
 import { StackNavigationProp } from '@react-navigation/stack';
 import { RootStackParamList } from '../navigation/MainNavigator';
 import { useApp } from '../context/AppContext';
 import { useAuth } from '../context/AuthContext';
+import { useFocusEffect } from '@react-navigation/native';
 
 type CommunityScreenNavigationProp = StackNavigationProp<RootStackParamList, 'MainTabs'>;
 
@@ -39,8 +44,314 @@ interface CommunityScreenProps {
 export default function CommunityScreen({ navigation }: CommunityScreenProps) {
     const { user } = useAuth();
     const [selectedCategory, setSelectedCategory] = useState('Feed');
-    const { communityPosts, togglePostLike, addCommentToPost, deletePost, editPost, getStoryGroups, wishlist, toggleWishlist } = useApp();
-    const scrollRef = React.useRef<ScrollView>(null);
+    const { wishlist, fetchWishlist } = useApp();
+
+    const [communityPosts, setCommunityPosts] = useState<CommunityPost[]>([]);
+    const [stories, setStories] = useState<Story[]>([]);
+    const [postComments, setPostComments] = useState<any[]>([]);
+    const [isLoading, setIsLoading] = useState(false);
+    const [isCommentsLoading, setIsCommentsLoading] = useState(false);
+    const [activePostId, setActivePostId] = useState<string | number | null>(null);
+
+    const viewabilityConfig = useRef({
+        itemVisiblePercentThreshold: 50
+    }).current;
+
+    const onViewableItemsChanged = useRef(({ viewableItems }: any) => {
+        if (viewableItems.length > 0) {
+            setActivePostId(viewableItems[0].item.id);
+        }
+    }).current;
+
+    const AndroidToast = (message: string, type: 'success' | 'error' = 'success') => {
+        if (Platform.OS === 'android') {
+            ToastAndroid.show(message, ToastAndroid.SHORT);
+        } else {
+            Alert.alert(type === 'error' ? 'Error' : 'Success', message);
+        }
+    };
+
+    // Fetch community posts
+    const fetchCommunityPosts = async () => {
+        setIsLoading(true);
+        try {
+            const response = await apiClient.get(`/post${user ? `?viewerId=${user.id}` : ''}`);
+            console.log('Community posts response:', response.data ? response.data.length : 'no data');
+            const data = response.data || [];
+
+            if (!Array.isArray(data)) {
+                console.error('API response data is not an array:', data);
+                setCommunityPosts([]);
+                return;
+            }
+
+            const mappedPosts: CommunityPost[] = data.map((dto: any) => {
+                if (!dto) return null;
+                const post = dto.post || dto;
+                if (!post || typeof post !== 'object' || !post.id) {
+                    console.warn('Invalid post data in DTO:', dto);
+                    return null;
+                }
+                return {
+                    id: post.id,
+                    userId: post.userId || post.user?.id,
+                    userName: post.user?.username || `User ${post.userId}`,
+                    userAvatar: post.user?.profilePicUrl,
+                    user: post.user,
+                    content: post.content,
+                    media: (post.media || []).map((m: any) => ({
+                        id: m.id,
+                        postId: m.postId,
+                        mediaUrl: m.mediaUrl,
+                        type: m.type || 'image',
+                        aspectRatio: m.aspectRatio || 1
+                    })),
+                    createdAt: post.createdAt,
+                    likes: post.likesCount || 0,
+                    likesCount: post.likesCount,
+                    likedByUser: dto.likedByUser || post.likedByUser || false,
+                    isSaved: dto.isSaved || dto.saved || post.saved || false,
+                    comments: (post.comments || []).map((c: any) => ({
+                        id: c.id,
+                        userId: c.userId,
+                        userName: c.userName || 'Unknown',
+                        content: c.content,
+                        timestamp: c.createdAt,
+                        likes: 0
+                    })),
+                    commentCount: post.commentsCount || 0,
+                    commentsCount: post.commentsCount,
+                    views: post.viewsCount || 0,
+                    viewsCount: post.viewsCount,
+                    savesCount: post.savesCount,
+                    location: post.location,
+                    feeling: post.feeling,
+                    allowComments: post.allowComments ?? true,
+                    isPublic: post.isPublic ?? true,
+                    vehicleId: post.vehicleId,
+                    tags: post.tags
+                };
+            }).filter((p: any) => p !== null);
+
+            setCommunityPosts(mappedPosts);
+        } catch (error) {
+            console.error('Error fetching community posts:', error);
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
+    // Fetch active stories
+    const fetchStories = async () => {
+        try {
+            const url = user ? `/story/active?userId=${user.id}` : '/story/active';
+            const response = await apiClient.get(url);
+            const data = response.data || [];
+
+            const mappedStories: Story[] = await Promise.all(
+                data.map(async (story: any) => {
+                    let hasLiked = story.isLikedByCurrentUser || false;
+                    let isFetched = false;
+
+                    // Fallback to checking the likers list directly if the user is logged in
+                    if (!hasLiked && user) {
+                        try {
+                            const likersResponse = await apiClient.get(`/story/${story.id}/likers`);
+                            const likersList = likersResponse.data || [];
+                            hasLiked = likersList.some((liker: any) => String(liker.id) === String(user.id));
+                            isFetched = true;
+                        } catch (e) {
+                            console.error(`Failed to fetch likers for story ${story.id}`);
+                        }
+                    }
+
+                    return {
+                        id: story.id.toString(),
+                        userId: story.userId.toString(),
+                        userName: story.user?.username || `User ${story.userId}`,
+                        userAvatar: story.user?.profilePicUrl,
+                        mediaUri: story.mediaUrl,
+                        mediaType: story.mediaType?.toLowerCase() || 'image',
+                        caption: story.caption,
+                        captionPosition: story.captionMetadata?.captionPosition,
+                        captionStyle: story.captionMetadata?.captionStyle,
+                        timestamp: new Date(story.createdAt).getTime(),
+                        expiresAt: new Date(story.expiresAt).getTime(),
+                        likesCount: story.likesCount || 0,
+                        viewsCount: story.viewsCount || 0,
+                        isLiked: hasLiked,
+                        isLikedFetched: isFetched,
+                        viewed: false
+                    };
+                })
+            );
+
+            setStories(mappedStories);
+        } catch (error) {
+            console.error('Error fetching stories:', error);
+        }
+    };
+
+    const togglePostLike = async (postId: string | number) => {
+        if (!user) return;
+        const postToToggle = communityPosts.find(p => p.id === postId);
+        if (!postToToggle) return;
+        const willBeLiked = !postToToggle.likedByUser;
+
+        setCommunityPosts((prev) => prev.map(post => {
+            if (post.id === postId) {
+                return {
+                    ...post,
+                    likedByUser: willBeLiked,
+                    likes: willBeLiked ? (post.likes + 1) : Math.max(0, post.likes - 1)
+                };
+            }
+            return post;
+        }));
+
+        try {
+            await apiClient.post(`/post/${postId}/like?userId=${user.id}`);
+            AndroidToast(willBeLiked ? 'Post Liked' : 'Like removed');
+        } catch (error) {
+            console.error('Error toggling like:', error);
+        }
+    };
+
+    const togglePostSave = async (postId: string | number) => {
+        if (!user) return;
+        const postToToggle = communityPosts.find(p => p.id === postId);
+        if (!postToToggle) return;
+        const willBeSaved = !postToToggle.isSaved;
+
+        setCommunityPosts((prev) => prev.map(post => {
+            if (post.id === postId) {
+                return {
+                    ...post,
+                    isSaved: willBeSaved
+                };
+            }
+            return post;
+        }));
+
+        try {
+            await apiClient.post(`/post/${postId}/save?userId=${user.id}`);
+            AndroidToast(willBeSaved ? 'Post saved to profile' : 'Post removed from saved');
+        } catch (error) {
+            console.error('Error toggling post save:', error);
+            // Rollback
+            setCommunityPosts((prev) => prev.map(post => {
+                if (post.id === postId) {
+                    return {
+                        ...post,
+                        isSaved: !willBeSaved
+                    };
+                }
+                return post;
+            }));
+        }
+    };
+
+    const fetchComments = async (postId: string | number) => {
+        setIsCommentsLoading(true);
+        try {
+            const response = await apiClient.get(`/post/${postId}/comments`);
+            setPostComments(response.data || []);
+        } catch (error) {
+            console.error('Error fetching comments:', error);
+            setPostComments([]);
+        } finally {
+            setIsCommentsLoading(false);
+        }
+    };
+
+    const addCommentToPost = async (postId: string | number, commentText: string) => {
+        if (!user) return;
+        try {
+            const response = await apiClient.post(`/post/${postId}/comment?userId=${user.id}`, commentText, {
+                headers: { 'Content-Type': 'text/plain' }
+            });
+            const newCommentData = response.data;
+
+            setCommunityPosts(prev => prev.map(p => {
+                if (p.id === postId) {
+                    const newComment = {
+                        id: newCommentData.id,
+                        userId: Number(user.id),
+                        userName: user.username || user.name || 'You',
+                        content: commentText,
+                        timestamp: new Date().toISOString(),
+                        likes: 0
+                    };
+                    return {
+                        ...p,
+                        comments: [...p.comments, newComment],
+                        commentCount: p.commentCount + 1
+                    };
+                }
+                return p;
+            }));
+            await fetchComments(postId);
+            AndroidToast('Comment added successfully!');
+        } catch (error) {
+            console.error('Error adding comment:', error);
+        }
+    };
+
+    const deletePost = async (postId: string | number) => {
+        const originalPosts = [...communityPosts];
+        setCommunityPosts((prev) => prev.filter(post => post.id !== postId));
+
+        try {
+            await apiClient.delete(`/post/${postId}`);
+            AndroidToast('Post deleted successfully!');
+        } catch (error) {
+            console.error('Error deleting post:', error);
+            setCommunityPosts(originalPosts);
+            AndroidToast('Failed to delete post', 'error');
+        }
+    };
+
+    const editPost = async (postId: string | number, updates: any) => {
+        try {
+            await apiClient.put(`/post/${postId}`, updates);
+            setCommunityPosts((prev) => prev.map(post => {
+                if (post.id === postId) {
+                    return { ...post, ...updates, tags: typeof updates.tags === 'string' ? updates.tags.split(',').filter(Boolean) : updates.tags };
+                }
+                return post;
+            }));
+            AndroidToast('Post updated successfully!');
+        } catch (error) {
+            console.error('Error editing post:', error);
+            AndroidToast('Failed to update post', 'error');
+        }
+    };
+
+    const getStoryGroups = (): StoryGroup[] => {
+        const now = Date.now();
+        const activeStories = stories.filter(story => story.expiresAt > now);
+
+        const grouped = activeStories.reduce((acc, story) => {
+            const userId = story.userId.toString();
+            if (!acc[userId]) {
+                acc[userId] = {
+                    userId: story.userId,
+                    userName: story.userName,
+                    userAvatar: story.userAvatar,
+                    stories: [],
+                    hasUnviewed: false,
+                };
+            }
+            acc[userId].stories.push(story);
+            if (!story.viewed) {
+                acc[userId].hasUnviewed = true;
+            }
+            return acc;
+        }, {} as Record<string, StoryGroup>);
+
+        return Object.values(grouped);
+    };
+    const scrollRef = React.useRef<FlatList>(null);
 
     // Comment sheet state
     const [commentSheetVisible, setCommentSheetVisible] = useState(false);
@@ -84,32 +395,42 @@ export default function CommunityScreen({ navigation }: CommunityScreenProps) {
 
         if (selectedCategory === 'Following') {
             // Following = Only from followed users OR your own posts
-            const isFollowed = user?.following.includes(post.userId);
-            const isOwnPost = user && post.userId === user.id;
+            const isFollowed = user?.following.includes(post.userId.toString());
+            const isOwnPost = user && post.userId.toString() === user.id;
             // Also include posts specifically categorized as 'following' for mock data
             return isFollowed || isOwnPost || post.category === 'following';
         }
 
         return true;
     }).sort((a, b) => {
-        const timeA = a.timestamp instanceof Date ? a.timestamp.getTime() : new Date(a.timestamp).getTime();
-        const timeB = b.timestamp instanceof Date ? b.timestamp.getTime() : new Date(b.timestamp).getTime();
+        const timeA = new Date(a.createdAt).getTime();
+        const timeB = new Date(b.createdAt).getTime();
         return timeB - timeA;
     });
 
     // Scroll to top when category changes
     React.useEffect(() => {
-        scrollRef.current?.scrollTo({ y: 0, animated: true });
+        scrollRef.current?.scrollToOffset({ offset: 0, animated: true });
     }, [selectedCategory]);
 
-    const handleLike = (postId: string) => {
+    // Initial fetch and refresh on focus
+    useFocusEffect(
+        useCallback(() => {
+            fetchCommunityPosts();
+            fetchStories();
+        }, [user?.id])
+    );
+
+    const handleLike = (postId: string | number) => {
         togglePostLike(postId);
     };
 
-    const handleComment = (postId: string) => {
+    const handleComment = (postId: string | number) => {
         const post = allPosts.find(p => p.id === postId);
         if (post) {
             setSelectedPostForComment(post);
+            setPostComments([]); // Clear previous comments
+            fetchComments(postId);
             setCommentSheetVisible(true);
         }
     };
@@ -120,7 +441,7 @@ export default function CommunityScreen({ navigation }: CommunityScreenProps) {
         }
     };
 
-    const handleShare = async (postId: string) => {
+    const handleShare = async (postId: string | number) => {
         try {
             const result = await Share.share({
                 message: `Check out this post on CarTrack Community! https://cartrack.app/post/${postId}`,
@@ -131,12 +452,12 @@ export default function CommunityScreen({ navigation }: CommunityScreenProps) {
         }
     };
 
-    const handleEditPost = (postId: string) => {
+    const handleEditPost = (postId: string | number) => {
         const post = allPosts.find(p => p.id === postId);
         if (post) {
             setEditContent(post.content);
             setEditLocation(post.location || '');
-            setEditTags(post.tags ? post.tags.join(', ') : '');
+            setEditTags(Array.isArray(post.tags) ? post.tags.join(', ') : (post.tags || ''));
             setEditingPost(post);
             setEditModalVisible(true);
         }
@@ -144,15 +465,20 @@ export default function CommunityScreen({ navigation }: CommunityScreenProps) {
 
     const handleSaveEdit = () => {
         if (editingPost && editContent.trim()) {
-            const tagsArray = editTags.split(',')
-                .map(tag => tag.trim().replace(/^#+/, ''))
-                .filter(tag => tag.length > 0);
-
-            editPost(editingPost.id, {
+            const payload = {
                 content: editContent.trim(),
                 location: editLocation.trim(),
-                tags: tagsArray
-            });
+                feeling: editingPost.feeling || "",
+                tags: editTags.trim(),
+                allowComments: editingPost.allowComments ?? true,
+                isPublic: editingPost.isPublic ?? true,
+                userId: editingPost.userId,
+                vehicleId: editingPost.vehicleId || 0,
+                likedByUser: editingPost.likedByUser || false,
+                isSaved: editingPost.isSaved || false
+            };
+
+            editPost(editingPost.id, payload);
 
             setEditModalVisible(false);
             setEditingPost(null);
@@ -162,7 +488,8 @@ export default function CommunityScreen({ navigation }: CommunityScreenProps) {
         }
     };
 
-    const handleDeletePost = (postId: string) => {
+
+    const handleDeletePost = (postId: string | number) => {
         Alert.alert(
             'Delete Post',
             'Are you sure you want to delete this post?',
@@ -190,10 +517,18 @@ export default function CommunityScreen({ navigation }: CommunityScreenProps) {
             storyGroup,
             allGroups,
             startIndex: startIndex >= 0 ? startIndex : 0,
+            onUpdateStoryLike: (storyId: string | number, newIsLiked: boolean, newLikesCount: number) => {
+                setStories(prev => prev.map(s => {
+                    if (String(s.id) === String(storyId)) {
+                        return { ...s, isLiked: newIsLiked, likesCount: newLikesCount };
+                    }
+                    return s;
+                }));
+            }
         });
     };
 
-    const handlePostImagePress = (postId: string) => {
+    const handlePostImagePress = (postId: string | number) => {
         const post = filteredPosts.find(p => p.id === postId);
         if (post) {
             (navigation as any).navigate('PostDetail', {
@@ -286,72 +621,74 @@ export default function CommunityScreen({ navigation }: CommunityScreenProps) {
                 ))}
             </View>
 
-            <ScrollView
-                ref={scrollRef}
+            {/* Posts List */}
+            <FlatList
+                ref={scrollRef as any}
+                data={filteredPosts}
+                keyExtractor={(item) => item.id.toString()}
+                renderItem={({ item }) => (
+                    <CommunityPostCard
+                        post={item}
+                        onLike={handleLike}
+                        onComment={handleComment}
+                        onShare={handleShare}
+                        onEdit={user && String(item.userId) === String(user.id) ? handleEditPost : undefined}
+                        onDelete={user && String(item.userId) === String(user.id) ? handleDeletePost : undefined}
+                        onImagePress={handlePostImagePress}
+                        isSaved={item.isSaved}
+                        onToggleSave={() => togglePostSave(item.id)}
+                        isActive={activePostId === item.id}
+                    />
+                )}
+                ListHeaderComponent={() => (
+                    <View>
+                        {/* Story List */}
+                        <StoryList
+                            storyGroups={getStoryGroups()}
+                            onAddStory={handleAddStory}
+                            onViewStory={handleViewStory}
+                        />
+                        <View style={{ height: 1, backgroundColor: '#F1F5F9' }} />
+
+                        {selectedCategory === 'Following' && (
+                            <View style={styles.followingHeader}>
+                                <Text style={styles.sectionTitle}>People You Follow</Text>
+                                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.peopleScroll}>
+                                    {[
+                                        { name: 'Rajesh', initial: 'R' },
+                                        { name: 'Amit', initial: 'A' },
+                                        { name: 'Hyundai', image: 'https://www.hyundai.com/content/dam/hyundai/ww/en/images/common/hyundai-logo.png' }
+                                    ].map((person, idx) => (
+                                        <View key={idx} style={styles.personCircle}>
+                                            {person.image ? (
+                                                <Image source={{ uri: person.image }} style={styles.avatarImageSmall} />
+                                            ) : (
+                                                <LinearGradient
+                                                    colors={[COLORS.primary, COLORS.secondary]}
+                                                    style={styles.avatarGradient}
+                                                >
+                                                    <Text style={styles.avatarInitial}>{person.initial}</Text>
+                                                </LinearGradient>
+                                            )}
+                                            <Text style={styles.personName} numberOfLines={1}>{person.name}</Text>
+                                        </View>
+                                    ))}
+                                </ScrollView>
+                            </View>
+                        )}
+                    </View>
+                )}
+                ListEmptyComponent={() => (
+                    <View style={styles.emptyContainer}>
+                        <Ionicons name="documents-outline" size={64} color={COLORS.textLight} />
+                        <Text style={styles.emptyText}>No posts found in {selectedCategory}</Text>
+                    </View>
+                )}
                 showsVerticalScrollIndicator={false}
-                stickyHeaderIndices={[1]}
-            >
-                {/* Story List */}
-                <StoryList
-                    storyGroups={getStoryGroups()}
-                    onAddStory={handleAddStory}
-                    onViewStory={handleViewStory}
-                />
-
-                <View style={{ height: 1, backgroundColor: '#F1F5F9' }} />
-
-                {/* Posts List */}
-                <View style={styles.postsList}>
-                    {selectedCategory === 'Following' && (
-                        <View style={styles.followingHeader}>
-                            <Text style={styles.sectionTitle}>People You Follow</Text>
-                            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.peopleScroll}>
-                                {[
-                                    { name: 'Rajesh', initial: 'R' },
-                                    { name: 'Amit', initial: 'A' },
-                                    { name: 'Hyundai', image: 'https://www.hyundai.com/content/dam/hyundai/ww/en/images/common/hyundai-logo.png' }
-                                ].map((person, idx) => (
-                                    <View key={idx} style={styles.personCircle}>
-                                        {person.image ? (
-                                            <Image source={{ uri: person.image }} style={styles.avatarImageSmall} />
-                                        ) : (
-                                            <LinearGradient
-                                                colors={[COLORS.primary, COLORS.secondary]}
-                                                style={styles.avatarGradient}
-                                            >
-                                                <Text style={styles.avatarInitial}>{person.initial}</Text>
-                                            </LinearGradient>
-                                        )}
-                                        <Text style={styles.personName} numberOfLines={1}>{person.name}</Text>
-                                    </View>
-                                ))}
-                            </ScrollView>
-                        </View>
-                    )}
-
-                    {filteredPosts.length > 0 ? (
-                        filteredPosts.map((post) => (
-                            <CommunityPostCard
-                                key={post.id}
-                                post={post}
-                                onLike={handleLike}
-                                onComment={handleComment}
-                                onShare={handleShare}
-                                onEdit={user && post.userId === user.id ? handleEditPost : undefined}
-                                onDelete={user && post.userId === user.id ? handleDeletePost : undefined}
-                                onImagePress={handlePostImagePress}
-                                isSaved={wishlist.includes(post.id)}
-                                onToggleSave={toggleWishlist}
-                            />
-                        ))
-                    ) : (
-                        <View style={styles.emptyContainer}>
-                            <Ionicons name="documents-outline" size={64} color={COLORS.textLight} />
-                            <Text style={styles.emptyText}>No posts found in {selectedCategory}</Text>
-                        </View>
-                    )}
-                </View>
-            </ScrollView>
+                onViewableItemsChanged={onViewableItemsChanged}
+                viewabilityConfig={viewabilityConfig}
+                contentContainerStyle={styles.postsList}
+            />
 
             {/* Floating Create Post Button */}
             <TouchableOpacity
@@ -373,11 +710,8 @@ export default function CommunityScreen({ navigation }: CommunityScreenProps) {
             <CommentBottomSheet
                 visible={commentSheetVisible}
                 onClose={() => setCommentSheetVisible(false)}
-                comments={
-                    selectedPostForComment
-                        ? (allPosts.find(p => p.id === selectedPostForComment.id)?.comments || [])
-                        : []
-                }
+                comments={postComments}
+                isLoading={isCommentsLoading}
                 onAddComment={handleAddComment}
             />
 
@@ -678,6 +1012,64 @@ const styles = StyleSheet.create({
     notificationBadgeText: {
         color: COLORS.white,
         fontSize: 10,
+        fontWeight: 'bold',
+    },
+    // Suggested Users
+    suggestionsSection: {
+        paddingVertical: 15,
+        backgroundColor: '#F8FAFC',
+        borderBottomWidth: 1,
+        borderBottomColor: '#F1F5F9',
+    },
+    sectionHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        paddingHorizontal: 20,
+        marginBottom: 10,
+    },
+    seeAllText: {
+        fontSize: 14,
+        color: COLORS.primary,
+        fontWeight: '600',
+    },
+    suggestionsList: {
+        paddingHorizontal: 20,
+        gap: 15,
+    },
+    suggestionCard: {
+        width: 120,
+        backgroundColor: COLORS.white,
+        borderRadius: 15,
+        padding: 12,
+        alignItems: 'center',
+        borderWidth: 1,
+        borderColor: '#F1F5F9',
+        ...SHADOWS.light,
+    },
+    suggestionAvatar: {
+        width: 60,
+        height: 60,
+        borderRadius: 30,
+        marginBottom: 8,
+    },
+    suggestionName: {
+        fontSize: 13,
+        fontWeight: '600',
+        color: COLORS.text,
+        marginBottom: 10,
+    },
+    followBtnSmall: {
+        backgroundColor: COLORS.primary,
+        paddingHorizontal: 15,
+        paddingVertical: 6,
+        borderRadius: 15,
+        width: '100%',
+        alignItems: 'center',
+    },
+    followBtnTextSmall: {
+        color: COLORS.white,
+        fontSize: 12,
         fontWeight: 'bold',
     },
 });

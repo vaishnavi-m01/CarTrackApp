@@ -7,31 +7,40 @@ import {
     TextInput,
     Image,
     ScrollView,
-    Alert,
     Platform,
     ToastAndroid,
     Modal,
     Dimensions,
     FlatList,
-    Switch,
     KeyboardAvoidingView,
+    Switch,
+    PanResponder,
+    Animated,
 } from 'react-native';
+import { Video as ExpoVideo, ResizeMode } from 'expo-av';
+let Compressor: any = null;
+try {
+    Compressor = require('react-native-compressor').Video;
+} catch (e) {
+    console.log('react-native-compressor not available (Standard Expo Go)');
+}
 import * as ImagePicker from 'expo-image-picker';
+import * as FileSystem from 'expo-file-system';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { COLORS, SIZES } from '../constants/theme';
-import { MediaItem } from '../types/Community';
+import apiClient from '../api/apiClient';
+import { CreatePostInput, MediaItem, CommunityPost } from '../types/Community';
 import { StackNavigationProp } from '@react-navigation/stack';
 import { RootStackParamList } from '../navigation/MainNavigator';
 import { useApp } from '../context/AppContext';
+import { useAuth } from '../context/AuthContext';
 
 type CreatePostScreenNavigationProp = StackNavigationProp<RootStackParamList, 'CreatePost'>;
 
 interface CreatePostScreenProps {
     navigation: CreatePostScreenNavigationProp;
 }
-
-import { useAuth } from '../context/AuthContext';
 
 export default function CreatePostScreen({ navigation }: CreatePostScreenProps) {
     const { user } = useAuth();
@@ -49,7 +58,7 @@ export default function CreatePostScreen({ navigation }: CreatePostScreenProps) 
     const [showTagModal, setShowTagModal] = useState(false);
     const [tagInput, setTagInput] = useState('');
     const [locationSuggestions, setLocationSuggestions] = useState<string[]>([]);
-    const { addCommunityPost, vehicles } = useApp();
+    const { vehicles } = useApp();
     const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
     // New states for the redesigned screen
@@ -58,9 +67,16 @@ export default function CreatePostScreen({ navigation }: CreatePostScreenProps) 
     const [selectedGarageVehicle, setSelectedGarageVehicle] = useState<string | null>(null);
 
     // Refinement states
-    const [refiningImage, setRefiningImage] = useState<string | null>(null);
+    const [pendingMediaItems, setPendingMediaItems] = useState<any[]>([]);
+    const [currentRefiningIndex, setCurrentRefiningIndex] = useState(0);
+    const [refiningMedia, setRefiningMedia] = useState<any | null>(null);
     const [originalRatio, setOriginalRatio] = useState<number>(1);
     const [selectedRatio, setSelectedRatio] = useState<number>(1);
+
+    // Trimming states
+    const [trimStart, setTrimStart] = useState<number>(0);
+    const [trimEnd, setTrimEnd] = useState<number>(0);
+    const [videoDuration, setVideoDuration] = useState<number>(0);
 
     // ... feelings array ...
     const feelings = [
@@ -106,61 +122,253 @@ export default function CreatePostScreen({ navigation }: CreatePostScreenProps) 
         const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
 
         if (status !== 'granted') {
-            Alert.alert('Permission needed', 'Please grant access to your photo library');
+            if (Platform.OS === 'android') {
+                ToastAndroid.show('Permission needed: Please grant access to your photo library', ToastAndroid.SHORT);
+            }
             return;
         }
 
         const result = await ImagePicker.launchImageLibraryAsync({
             mediaTypes: ImagePicker.MediaTypeOptions.All,
-            allowsMultipleSelection: false,
+            allowsMultipleSelection: true,
+            selectionLimit: 10 - mediaItems.length,
             quality: 0.8,
         });
 
-        if (!result.canceled && result.assets && result.assets[0]) {
-            const asset = result.assets[0];
-            if (asset.type === 'video') {
-                setMediaItems([...mediaItems, {
-                    id: `media_${Date.now()}`,
-                    type: 'video',
-                    uri: asset.uri,
-                    aspectRatio: 0,
-                }]);
-            } else {
-                const ratio = asset.width / asset.height;
-                setOriginalRatio(ratio);
-                setRefiningImage(asset.uri);
-                setSelectedRatio(1); // Start with Square
+        if (!result.canceled && result.assets && result.assets.length > 0) {
+            const validAssets = [];
+            for (const asset of result.assets) {
+                // Validation: Size limit (500MB for long videos)
+                try {
+                    const fileInfo = await FileSystem.getInfoAsync(asset.uri);
+                    if (fileInfo.exists && fileInfo.size && fileInfo.size > 500 * 1024 * 1024) {
+                        ToastAndroid.show(`File too large: ${asset.fileName || 'Media'} exceeds 500MB`, ToastAndroid.SHORT);
+                        continue;
+                    }
+                } catch (e) {
+                    console.log('Error checking file size:', e);
+                }
+
+                // Video Duration Validation (30 minutes)
+                if (asset.type === 'video' && asset.duration && asset.duration > 30 * 60 * 1000) {
+                    // Automatically trim video to 30 minutes
+                    (asset as any).trimStart = 0;
+                    (asset as any).trimEnd = 30 * 60 * 1000;
+                    asset.duration = 30 * 60 * 1000;
+                    ToastAndroid.show('Video is longer than 30 minutes. It will be trimmed to 30 minutes.', ToastAndroid.SHORT);
+                }
+                validAssets.push(asset);
+            }
+
+            if (validAssets.length > 0) {
+                setPendingMediaItems(validAssets);
+                setCurrentRefiningIndex(0);
+                prepareForRefinement(validAssets[0]);
             }
         }
     };
 
-    const toggleRatio = () => {
-        if (selectedRatio === 1) {
-            // Switch to Original (capped for professional feed)
-            let targetRatio = originalRatio;
-            if (targetRatio < 0.8) targetRatio = 0.8; // Portrait cap (4:5)
-            if (targetRatio > 1.91) targetRatio = 1.91; // Landscape cap
-            setSelectedRatio(targetRatio);
-        } else {
-            // Switch back to Square
-            setSelectedRatio(1);
+    const prepareForRefinement = (asset: any) => {
+        if (!asset) return;
+
+        // Safety check for dimensions
+        const width = asset.width || 1080;
+        const height = asset.height || 1080;
+        const ratio = width / height;
+
+        setOriginalRatio(ratio);
+        setRefiningMedia(asset);
+
+        // Initialize trimming for videos
+        if (asset.type === 'video') {
+            const duration = asset.duration || 0;
+            setVideoDuration(duration);
+            setTrimStart(0);
+            setTrimEnd(duration);
         }
+
+        // Default ratios based on type
+        if (asset.type === 'video') {
+            // Use 16:9 for landscape, 4:5 for portrait/square
+            setSelectedRatio(ratio > 1.25 ? 1.77 : 0.8);
+        } else {
+            setSelectedRatio(1); // Default to Square for image
+        }
+    };
+
+    const toggleRatio = () => {
+        const ratios = refiningMedia?.type === 'video'
+            ? [0.8, 1, 1.77] // 4:5, 1:1, 16:9
+            : [0.8, 1, originalRatio]; // 4:5, 1:1, Original
+
+        const currentIndex = ratios.indexOf(selectedRatio);
+        const nextIndex = (currentIndex + 1) % ratios.length;
+        setSelectedRatio(ratios[nextIndex]);
         Haptics.selectionAsync();
     };
 
-    const handleAddRefinedImage = () => {
-        if (refiningImage) {
-            setMediaItems([...mediaItems, {
-                id: `media_${Date.now()}`,
-                type: 'image',
-                uri: refiningImage,
-                aspectRatio: selectedRatio,
-            }]);
-            setRefiningImage(null);
+    const handleAddRefinedMedia = () => {
+        if (refiningMedia) {
+            const newItem: MediaItem = {
+                id: `media_${Date.now()}_${currentRefiningIndex}`,
+                type: refiningMedia.type === 'video' ? 'video' : 'image',
+                uri: refiningMedia.uri,
+                aspectRatio: selectedRatio || 1,
+                // @ts-ignore - Adding custom fields for trimming
+                trimStart: refiningMedia.type === 'video' ? trimStart : undefined,
+                trimEnd: refiningMedia.type === 'video' ? trimEnd : undefined,
+            };
+
+            if (currentMediaEditingId) {
+                // Edit existing
+                setMediaItems(prev => prev.map(item =>
+                    item.id === currentMediaEditingId ? newItem : item
+                ));
+            } else {
+                // Add new
+                setMediaItems(prev => [...prev, newItem]);
+            }
+
+            if (currentRefiningIndex < pendingMediaItems.length - 1) {
+                const nextIndex = currentRefiningIndex + 1;
+                setCurrentRefiningIndex(nextIndex);
+                prepareForRefinement(pendingMediaItems[nextIndex]);
+            } else {
+                setRefiningMedia(null);
+                setPendingMediaItems([]);
+                setCurrentMediaEditingId(null);
+            }
         }
     };
 
-    const removeMedia = (id: string) => {
+    const [currentMediaEditingId, setCurrentMediaEditingId] = useState<string | number | null>(null);
+
+    const handleEditSelectedMedia = (item: MediaItem) => {
+        // Prepare refinement for an already selected item
+        const asset = {
+            uri: item.uri,
+            type: item.type,
+            width: item.aspectRatio > 1 ? 1920 : 1080,
+            height: item.aspectRatio > 1 ? 1080 : 1350,
+            duration: (item as any).duration || 0, // Fallback if duration lost
+        };
+
+        setCurrentMediaEditingId(item.id);
+        prepareForRefinement(asset);
+        // Find if it was a video, preserve original duration if possible
+        if (item.type === 'video') {
+            setTrimStart((item as any).trimStart || 0);
+            setTrimEnd((item as any).trimEnd || (item as any).duration || 0);
+        }
+        setSelectedRatio(item.aspectRatio);
+    };
+
+    const handleAddAllRemaining = () => {
+        const remaining = pendingMediaItems.slice(currentRefiningIndex);
+        const newItems = remaining.map((asset, index) => {
+            const width = asset.width || 1080;
+            const height = asset.height || 1080;
+            const ratio = asset.type === 'video'
+                ? (width / height > 1.25 ? 1.77 : 0.8)
+                : 1;
+
+            return {
+                id: `media_${Date.now()}_${currentRefiningIndex + index}`,
+                type: (asset.type === 'video' ? 'video' : 'image') as 'image' | 'video',
+                uri: asset.uri,
+                aspectRatio: ratio,
+            } as MediaItem;
+        });
+
+        setMediaItems(prev => [...prev, ...newItems]);
+        setRefiningMedia(null);
+        setPendingMediaItems([]);
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    };
+
+    const videoRef = React.useRef<ExpoVideo>(null);
+
+    const trimStartRef = React.useRef(trimStart);
+    const trimEndRef = React.useRef(trimEnd);
+    const videoDurationRef = React.useRef(videoDuration);
+
+    // Keep refs in sync with state so PanResponders read latest values
+    React.useEffect(() => { trimStartRef.current = trimStart; }, [trimStart]);
+    React.useEffect(() => { trimEndRef.current = trimEnd; }, [trimEnd]);
+    React.useEffect(() => { videoDurationRef.current = videoDuration; }, [videoDuration]);
+
+    const containerWidthRef = React.useRef(SCREEN_WIDTH - 40);
+
+    const panResponderStart = React.useRef(
+        PanResponder.create({
+            onStartShouldSetPanResponder: () => true,
+            onMoveShouldSetPanResponder: () => true,
+            onPanResponderMove: (_, gestureState) => {
+                const cw = containerWidthRef.current;
+                const dur = videoDurationRef.current;
+                const newPos = Math.max(0, Math.min(trimEndRef.current - 1000, ((gestureState.moveX - 20) / cw) * dur));
+                setTrimStart(newPos);
+                videoRef.current?.setPositionAsync(newPos);
+            },
+        })
+    ).current;
+
+    const panResponderEnd = React.useRef(
+        PanResponder.create({
+            onStartShouldSetPanResponder: () => true,
+            onMoveShouldSetPanResponder: () => true,
+            onPanResponderMove: (_, gestureState) => {
+                const cw = containerWidthRef.current;
+                const dur = videoDurationRef.current;
+                const newPos = Math.max(trimStartRef.current + 1000, Math.min(dur, ((gestureState.moveX - 20) / cw) * dur));
+                setTrimEnd(newPos);
+                videoRef.current?.setPositionAsync(newPos);
+            },
+        })
+    ).current;
+
+    const renderVideoTrimmer = () => {
+        if (!refiningMedia || refiningMedia.type !== 'video' || videoDuration === 0) return null;
+
+        const containerWidth = SCREEN_WIDTH - 40;
+        containerWidthRef.current = containerWidth;
+        const leftPos = (trimStart / videoDuration) * containerWidth;
+        const rightPos = (trimEnd / videoDuration) * containerWidth;
+
+        return (
+            <View style={styles.trimmerContainer}>
+                <View style={[styles.trimmerTrack, { width: containerWidth }]}>
+                    <View style={[styles.trimmerHighlight, { left: leftPos, width: rightPos - leftPos }]} />
+                    <View
+                        {...panResponderStart.panHandlers}
+                        style={[styles.trimmerHandle, { left: leftPos - 10 }]}
+                    >
+                        <View style={styles.handleBar} />
+                    </View>
+                    <View
+                        {...panResponderEnd.panHandlers}
+                        style={[styles.trimmerHandle, { left: rightPos - 10 }]}
+                    >
+                        <View style={styles.handleBar} />
+                    </View>
+                </View>
+                <View style={styles.trimmerLabels}>
+                    <Text style={styles.trimmerTimeText}>{formatTime(trimStart)}</Text>
+                    <Text style={styles.trimmerTimeText}>Selected: {formatTime(trimEnd - trimStart)}</Text>
+                    <Text style={styles.trimmerTimeText}>{formatTime(trimEnd)}</Text>
+                </View>
+            </View>
+        );
+    };
+
+    const formatTime = (ms: number) => {
+        const totalSeconds = Math.floor(ms / 1000);
+        const minutes = Math.floor(totalSeconds / 60);
+        const seconds = totalSeconds % 60;
+        return `${minutes}:${seconds < 10 ? '0' : ''}${seconds}`;
+    };
+
+    const removeMedia = (id: string | number) => {
         setMediaItems(prev => prev.filter(item => item.id !== id));
     };
 
@@ -235,42 +443,126 @@ export default function CreatePostScreen({ navigation }: CreatePostScreenProps) 
     const handleRemoveTag = (tag: string) => setTags(tags.filter(t => t !== tag));
 
 
+
     const handlePost = async () => {
         if (!content.trim() && mediaItems.length === 0) {
-            Alert.alert('Empty post', 'Please add some content or media to your post');
+            if (Platform.OS === 'android') {
+                ToastAndroid.show('Please add some content or media to your post', ToastAndroid.SHORT);
+            }
             return;
         }
 
+        if (!user) return;
         setIsPosting(true);
 
-        // Build post content
-        let postContent = content.trim();
+        try {
+            const payload: CreatePostInput = {
+                userId: Number(user.id),
+                content: content.trim(),
+                location: location.trim() || undefined,
+                feeling: feeling.trim() || undefined,
+                allowComments: allowComments,
+                isPublic: isPublic,
+                vehicleId: selectedGarageVehicle ? Number(selectedGarageVehicle) : undefined,
+                tags: tags.join(','),
+            };
 
-        // Add post to context
-        if (user) {
-            addCommunityPost({
-                userId: user.id,
-                userName: user.name,
-                userAvatar: undefined,
-                content: postContent,
-                media: mediaItems,
-                comments: [],
-                category: 'feed',
-                location: location.trim(),
-                tags: tags,
-                // Add new fields if supported by context otherwise they are just visual for now
+            // Step 1: Create the post
+            const postResponse = await apiClient.post('/post', {
+                ...payload,
+                createdAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString()
             });
+
+            const createdPost = postResponse.data;
+            console.log('Post created successfully:', createdPost);
+
+            // Step 2: Upload media if any
+            if (mediaItems && mediaItems.length > 0) {
+                for (const media of mediaItems) {
+                    const formData = new FormData();
+                    let finalUri = media.uri;
+
+                    // Compression and Trimming Step for Videos
+                    if (media.type === 'video') {
+                        try {
+                            console.log(`Processing video: ${media.uri}`);
+
+                            // Perform compression and trimming
+                            const compressedUri = await Compressor.compress(
+                                media.uri as string,
+                                {
+                                    compressionMethod: 'auto',
+                                    // @ts-ignore - Some versions support these in options
+                                    startTime: media.trimStart ? media.trimStart / 1000 : 0,
+                                    // @ts-ignore - Some versions support these in options
+                                    endTime: media.trimEnd ? media.trimEnd / 1000 : undefined,
+                                }
+                            );
+
+                            finalUri = compressedUri;
+                            console.log(`Video processed. New URI: ${finalUri}`);
+                        } catch (err) {
+                            console.log('Video compression failed, using original:', err);
+                            finalUri = media.uri;
+                        }
+                    }
+
+                    const mediaData = JSON.stringify({
+                        postId: createdPost.id,
+                        type: media.type.toUpperCase(),
+                        aspectRatio: media.aspectRatio || 1
+                    });
+
+                    const uri = finalUri || media.uri || '';
+                    if (!uri) {
+                        console.log('Skipping media item with no URI');
+                        continue;
+                    }
+
+                    const name = uri.split('/').pop() || (media.type === 'video' ? 'video.mp4' : 'image.jpg');
+                    const fileType = media.type === 'video' ? 'video/mp4' : 'image/jpeg';
+
+                    console.log('Uploading media payload:', mediaData);
+                    console.log('Media file details:', {
+                        uri: media.uri,
+                        name,
+                        type: fileType
+                    });
+
+                    formData.append('data', mediaData);
+
+                    formData.append('file', {
+                        uri,
+                        name,
+                        type: fileType,
+                    } as any);
+
+                    await apiClient.post('/post-media', formData, {
+                        headers: { 'Content-Type': 'multipart/form-data' }
+                    });
+                }
+            }
+
+            // Show success toast
+            if (Platform.OS === 'android') {
+                ToastAndroid.show('Post shared successfully!', ToastAndroid.SHORT);
+            }
+
+            // Fetch the final post with media is no longer strictly needed if we navigate away, 
+            // but it's good for ensuring completeness.
+            const finalPostResponse = await apiClient.get(`/post/${createdPost.id}`);
+
+            // Navigate back to community feed instead of detail screen
+            navigation.navigate('MainTabs', { screen: 'Community' });
+        } catch (error) {
+            console.error('Error creating post in screen:', error);
+            if (Platform.OS === 'android') {
+                ToastAndroid.show('Failed to create post. Please try again.', ToastAndroid.SHORT);
+            }
+        } finally {
+            setIsPosting(false);
         }
-
-        setIsPosting(false);
-
-        if (Platform.OS === 'android') {
-            ToastAndroid.show('Post created successfully!', ToastAndroid.SHORT);
-        } else {
-            Alert.alert('Success', 'Post created successfully!');
-        }
-
-        navigation.goBack();
     };
 
     const renderMediaUploader = () => (
@@ -292,8 +584,18 @@ export default function CreatePostScreen({ navigation }: CreatePostScreenProps) 
             {mediaItems.length > 0 && (
                 <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.mediaScroll}>
                     {mediaItems.map((item) => (
-                        <View key={item.id} style={styles.mediaThumbContainer}>
-                            <Image source={{ uri: item.uri }} style={styles.mediaThumb} />
+                        <View key={item.id.toString()} style={styles.mediaThumbContainer}>
+                            <TouchableOpacity
+                                activeOpacity={0.8}
+                                onPress={() => handleEditSelectedMedia(item)}
+                            >
+                                <Image source={{ uri: item.uri }} style={styles.mediaThumb} />
+                                {item.type === 'video' && (
+                                    <View style={styles.videoIconOverlay}>
+                                        <Ionicons name="play" size={14} color={COLORS.white} />
+                                    </View>
+                                )}
+                            </TouchableOpacity>
                             <TouchableOpacity
                                 style={styles.removeMediaIcon}
                                 onPress={() => removeMedia(item.id)}
@@ -310,354 +612,398 @@ export default function CreatePostScreen({ navigation }: CreatePostScreenProps) 
 
 
     return (
-        <KeyboardAvoidingView
-            style={{ flex: 1 }}
-            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-            keyboardVerticalOffset={Platform.OS === 'ios' ? 80 : 0}
-        >
-            <View style={styles.container}>
-                <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
-                    {/* Media Section */}
-                    {renderMediaUploader()}
+        <View style={{ flex: 1 }}>
+            <KeyboardAvoidingView
+                style={{ flex: 1 }}
+                behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+                keyboardVerticalOffset={Platform.OS === 'ios' ? 80 : 0}
+            >
+                <View style={styles.container}>
+                    <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
+                        {/* Media Section */}
+                        {renderMediaUploader()}
 
-                    {/* Input Area */}
-                    <View style={styles.inputSection}>
-                        <View style={styles.inputWrapper}>
-                            <TextInput
-                                style={styles.mainInput}
-                                placeholder="What's happening in the garage?"
-                                placeholderTextColor="#94A3B8"
-                                value={content}
-                                onChangeText={setContent}
-                                multiline
-                            />
-
-                            {/* Selected Meta Chips */}
-                            {(location || feeling || tags.length > 0) && (
-                                <View style={styles.metaChipsContainer}>
-                                    {location ? (
-                                        <View style={styles.metaChip}>
-                                            <Ionicons name="location" size={12} color={COLORS.primary} />
-                                            <Text style={styles.metaChipText}>{location}</Text>
-                                            <TouchableOpacity onPress={handleRemoveLocation}>
-                                                <Ionicons name="close-circle" size={14} color="#94A3B8" />
-                                            </TouchableOpacity>
-                                        </View>
-                                    ) : null}
-                                    {feeling ? (
-                                        <View style={styles.metaChip}>
-                                            <Text style={styles.metaChipEmoji}>{feelings.find(f => f.label === feeling)?.emoji}</Text>
-                                            <Text style={styles.metaChipText}>feeling {feeling}</Text>
-                                            <TouchableOpacity onPress={handleRemoveFeeling}>
-                                                <Ionicons name="close-circle" size={14} color="#94A3B8" />
-                                            </TouchableOpacity>
-                                        </View>
-                                    ) : null}
-                                    {tags.map((tag) => (
-                                        <View key={tag} style={styles.metaChip}>
-                                            <Text style={styles.metaChipText}>#{tag}</Text>
-                                            <TouchableOpacity onPress={() => handleRemoveTag(tag)}>
-                                                <Ionicons name="close-circle" size={14} color="#94A3B8" />
-                                            </TouchableOpacity>
-                                        </View>
-                                    ))}
-                                </View>
-                            )}
-
-                            <View style={styles.inputActions}>
-                                <TouchableOpacity onPress={() => setShowTagModal(true)}>
-                                    <Ionicons name="car-outline" size={22} color="#94A3B8" />
-                                </TouchableOpacity>
-                                <TouchableOpacity onPress={() => setShowFeelingModal(true)}>
-                                    <Ionicons name="happy-outline" size={22} color="#94A3B8" />
-                                </TouchableOpacity>
-                                <TouchableOpacity onPress={() => setShowLocationModal(true)}>
-                                    <Ionicons name="location-outline" size={22} color="#94A3B8" />
-                                </TouchableOpacity>
-                                <TouchableOpacity>
-                                    <Ionicons name="people-outline" size={22} color="#94A3B8" />
-                                </TouchableOpacity>
+                        {/* Input Area */}
+                        <View style={styles.inputSection}>
+                            <View style={styles.requiredLabelRow}>
+                                <Text style={styles.requiredLabel}>Caption</Text>
+                                <Text style={styles.requiredStar}> * </Text>
                             </View>
-                            <Text style={styles.charCount}>{content.length}/2200</Text>
-                        </View>
-                    </View>
-
-                    {/* Tag Vehicle Section */}
-                    <View style={styles.sectionContainer}>
-                        <Text style={styles.sectionTitle}>Tag Vehicle from Garage</Text>
-                        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.garageScroll}>
-                            {vehicles.map((v: any) => (
-                                <TouchableOpacity
-                                    key={v.id}
-                                    style={[
-                                        styles.vehicleChip,
-                                        selectedGarageVehicle === v.id && styles.vehicleChipActive
-                                    ]}
-                                    onPress={() => setSelectedGarageVehicle(selectedGarageVehicle === v.id ? null : v.id)}
-                                >
-                                    <Ionicons
-                                        name={v.type === 'CAR' ? 'car' : 'bicycle'}
-                                        size={16}
-                                        color={selectedGarageVehicle === v.id ? COLORS.white : COLORS.primary}
-                                    />
-                                    <Text style={[
-                                        styles.vehicleChipText,
-                                        selectedGarageVehicle === v.id && styles.vehicleChipTextActive
-                                    ]}>
-                                        {v.year} {v.brand} {v.model}
-                                    </Text>
-                                </TouchableOpacity>
-                            ))}
-                        </ScrollView>
-                    </View>
-
-                    {/* Post Settings */}
-                    <View style={styles.sectionContainer}>
-                        <Text style={styles.sectionTitle}>Post Settings</Text>
-                        <View style={styles.settingsBox}>
-                            <TouchableOpacity
-                                style={styles.settingRow}
-                                onPress={() => setIsPublic(true)}
-                            >
-                                <View style={styles.settingIconBox}>
-                                    <Ionicons name="globe-outline" size={20} color={isPublic ? COLORS.primary : COLORS.text} />
-                                </View>
-                                <View style={styles.settingInfo}>
-                                    <Text style={[styles.settingLabel, isPublic && { color: COLORS.primary }]}>Public</Text>
-                                    <Text style={styles.settingSub}>Visible to everyone on the platform</Text>
-                                </View>
-                                <Ionicons
-                                    name={isPublic ? "radio-button-on" : "radio-button-off"}
-                                    size={22}
-                                    color={isPublic ? COLORS.primary : "#CBD5E1"}
+                            <View style={styles.inputWrapper}>
+                                <TextInput
+                                    style={styles.mainInput}
+                                    placeholder="What's happening in the garage?"
+                                    placeholderTextColor="#94A3B8"
+                                    value={content}
+                                    onChangeText={setContent}
+                                    multiline
                                 />
-                            </TouchableOpacity>
 
-                            <TouchableOpacity
-                                style={styles.settingRow}
-                                onPress={() => setIsPublic(false)}
-                            >
-                                <View style={styles.settingIconBox}>
-                                    <Ionicons name="people-outline" size={20} color={!isPublic ? COLORS.primary : COLORS.text} />
-                                </View>
-                                <View style={styles.settingInfo}>
-                                    <Text style={[styles.settingLabel, !isPublic && { color: COLORS.primary }]}>Followers Only</Text>
-                                    <Text style={styles.settingSub}>Only your followers can see</Text>
-                                </View>
-                                <Ionicons
-                                    name={!isPublic ? "radio-button-on" : "radio-button-off"}
-                                    size={22}
-                                    color={!isPublic ? COLORS.primary : "#CBD5E1"}
-                                />
-                            </TouchableOpacity>
+                                {/* Selected Meta Chips */}
+                                {(location || feeling || tags.length > 0) && (
+                                    <View style={styles.metaChipsContainer}>
+                                        {location ? (
+                                            <View style={styles.metaChip}>
+                                                <Ionicons name="location" size={12} color={COLORS.primary} />
+                                                <Text style={styles.metaChipText}>{location}</Text>
+                                                <TouchableOpacity onPress={handleRemoveLocation}>
+                                                    <Ionicons name="close-circle" size={14} color="#94A3B8" />
+                                                </TouchableOpacity>
+                                            </View>
+                                        ) : null}
+                                        {feeling ? (
+                                            <View style={styles.metaChip}>
+                                                <Text style={styles.metaChipEmoji}>{feelings.find(f => f.label === feeling)?.emoji}</Text>
+                                                <Text style={styles.metaChipText}>feeling {feeling}</Text>
+                                                <TouchableOpacity onPress={handleRemoveFeeling}>
+                                                    <Ionicons name="close-circle" size={14} color="#94A3B8" />
+                                                </TouchableOpacity>
+                                            </View>
+                                        ) : null}
+                                        {tags.map((tag) => (
+                                            <View key={tag} style={styles.metaChip}>
+                                                <Text style={styles.metaChipText}>#{tag}</Text>
+                                                <TouchableOpacity onPress={() => handleRemoveTag(tag)}>
+                                                    <Ionicons name="close-circle" size={14} color="#94A3B8" />
+                                                </TouchableOpacity>
+                                            </View>
+                                        ))}
+                                    </View>
+                                )}
 
-                            <View style={styles.settingRow}>
-                                <View style={styles.settingIconBox}>
-                                    <Ionicons name="chatbubble-outline" size={20} color={COLORS.text} />
+                                <View style={styles.inputActions}>
+                                    <TouchableOpacity onPress={() => setShowTagModal(true)}>
+                                        <Ionicons name="car-outline" size={22} color="#94A3B8" />
+                                    </TouchableOpacity>
+                                    <TouchableOpacity onPress={() => setShowFeelingModal(true)}>
+                                        <Ionicons name="happy-outline" size={22} color="#94A3B8" />
+                                    </TouchableOpacity>
+                                    <TouchableOpacity onPress={() => setShowLocationModal(true)}>
+                                        <Ionicons name="location-outline" size={22} color="#94A3B8" />
+                                    </TouchableOpacity>
+                                    <TouchableOpacity>
+                                        <Ionicons name="people-outline" size={22} color="#94A3B8" />
+                                    </TouchableOpacity>
                                 </View>
-                                <View style={styles.settingInfo}>
-                                    <Text style={styles.settingLabel}>Allow Comments</Text>
-                                </View>
-                                <Switch
-                                    value={allowComments}
-                                    onValueChange={setAllowComments}
-                                    trackColor={{ false: '#CBD5E1', true: COLORS.primary }}
-                                    thumbColor={COLORS.white}
-                                />
+                                <Text style={styles.charCount}>{content.length}/2200</Text>
                             </View>
                         </View>
-                    </View>
 
-                    <TouchableOpacity
-                        style={[styles.postNowBtn, (!content.trim() && mediaItems.length === 0) && styles.postNowBtnDisabled]}
-                        onPress={handlePost}
-                        disabled={isPosting || (!content.trim() && mediaItems.length === 0)}
-                    >
-                        <Text style={styles.postNowBtnText}>{isPosting ? 'POSTING...' : 'POST NOW'}</Text>
-                    </TouchableOpacity>
-
-                    <View style={{ height: 40 }} />
-                </ScrollView>
-
-                {/* Existing Modals for Location, Feeling, Tag */}
-                {/* Location Modal */}
-                <Modal
-                    visible={showLocationModal}
-                    transparent
-                    animationType="slide"
-                    onRequestClose={() => setShowLocationModal(false)}
-                >
-                    <View style={styles.modalOverlay}>
-                        <View style={styles.modalContainer}>
-                            <View style={styles.modalHeader}>
-                                <Text style={styles.modalTitle}>Add Location</Text>
-                                <TouchableOpacity onPress={() => setShowLocationModal(false)}>
-                                    <Ionicons name="close" size={24} color={COLORS.text} />
-                                </TouchableOpacity>
-                            </View>
-                            <TextInput
-                                style={styles.modalInput}
-                                placeholder="Search for a place..."
-                                placeholderTextColor={COLORS.textLight}
-                                value={locationInput}
-                                onChangeText={setLocationInput}
-                                autoFocus
-                            />
-                            {locationSuggestions.length > 0 && (
-                                <ScrollView style={{ maxHeight: 180, marginBottom: 10 }}>
-                                    {locationSuggestions.map((loc) => (
-                                        <TouchableOpacity key={loc} style={{ padding: 12, borderBottomWidth: 1, borderBottomColor: '#F1F5F9' }} onPress={() => handleAddLocation(loc)}>
-                                            <Text style={{ color: COLORS.text }}>{loc}</Text>
-                                        </TouchableOpacity>
-                                    ))}
-                                </ScrollView>
-                            )}
-                            <TouchableOpacity
-                                style={[styles.modalButton, !locationInput.trim() && styles.modalButtonDisabled]}
-                                onPress={() => handleAddLocation()}
-                                disabled={!locationInput.trim()}
-                            >
-                                <Text style={styles.modalButtonText}>Add Location</Text>
-                            </TouchableOpacity>
-                        </View>
-                    </View>
-                </Modal>
-
-                {/* Tag Modal (General Tags) */}
-                <Modal
-                    visible={showTagModal}
-                    transparent
-                    animationType="slide"
-                    onRequestClose={() => setShowTagModal(false)}
-                >
-                    <View style={styles.modalOverlay}>
-                        <View style={styles.modalContainer}>
-                            <View style={styles.modalHeader}>
-                                <Text style={styles.modalTitle}>Add Tag</Text>
-                                <TouchableOpacity onPress={() => setShowTagModal(false)}>
-                                    <Ionicons name="close" size={24} color={COLORS.text} />
-                                </TouchableOpacity>
-                            </View>
-                            <TextInput
-                                style={styles.modalInput}
-                                placeholder="Enter tags (e.g., car, travel)"
-                                placeholderTextColor={COLORS.textLight}
-                                value={tagInput}
-                                onChangeText={(text) => {
-                                    if (text.endsWith(',')) {
-                                        handleAddTag(text.slice(0, -1), true);
-                                    } else {
-                                        setTagInput(text);
-                                    }
-                                }}
-                                autoFocus
-                            />
-                            <TouchableOpacity
-                                style={[styles.modalButton, !tagInput.trim() && styles.modalButtonDisabled]}
-                                onPress={() => handleAddTag()}
-                                disabled={!tagInput.trim()}
-                            >
-                                <Text style={styles.modalButtonText}>Add Tag</Text>
-                            </TouchableOpacity>
-                        </View>
-                    </View>
-                </Modal>
-
-                {/* Feeling Modal */}
-                <Modal
-                    visible={showFeelingModal}
-                    transparent
-                    animationType="slide"
-                    onRequestClose={() => setShowFeelingModal(false)}
-                >
-                    <View style={styles.modalOverlay}>
-                        <View style={styles.modalContainer}>
-                            <View style={styles.modalHeader}>
-                                <Text style={styles.modalTitle}>How are you feeling?</Text>
-                                <TouchableOpacity onPress={() => setShowFeelingModal(false)}>
-                                    <Ionicons name="close" size={24} color={COLORS.text} />
-                                </TouchableOpacity>
-                            </View>
-                            <ScrollView style={styles.feelingsGrid}>
-                                {feelings.map((item) => (
+                        {/* Tag Vehicle Section */}
+                        <View style={styles.sectionContainer}>
+                            <Text style={styles.sectionTitle}>Tag Vehicle from Garage</Text>
+                            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.garageScroll}>
+                                {vehicles.map((v: any) => (
                                     <TouchableOpacity
-                                        key={item.label}
-                                        style={styles.feelingItem}
-                                        onPress={() => handleSelectFeeling(`${item.emoji} ${item.label}`)}
+                                        key={v.id}
+                                        style={[
+                                            styles.vehicleChip,
+                                            selectedGarageVehicle === v.id && styles.vehicleChipActive
+                                        ]}
+                                        onPress={() => setSelectedGarageVehicle(selectedGarageVehicle === v.id ? null : v.id)}
                                     >
-                                        <Text style={styles.feelingEmoji}>{item.emoji}</Text>
-                                        <Text style={styles.feelingLabel}>{item.label}</Text>
+                                        <Ionicons
+                                            name={v.type === 'CAR' ? 'car' : 'bicycle'}
+                                            size={16}
+                                            color={selectedGarageVehicle === v.id ? COLORS.white : COLORS.primary}
+                                        />
+                                        <Text style={[
+                                            styles.vehicleChipText,
+                                            selectedGarageVehicle === v.id && styles.vehicleChipTextActive
+                                        ]}>
+                                            {v.year} {v.brand} {v.model}
+                                        </Text>
                                     </TouchableOpacity>
                                 ))}
                             </ScrollView>
                         </View>
-                    </View>
-                </Modal>
 
-                {/* Instagram-style Refinement Modal */}
-                <Modal
-                    visible={!!refiningImage}
-                    transparent
-                    animationType="fade"
-                    onRequestClose={() => setRefiningImage(null)}
-                >
-                    <View style={styles.refinementOverlay}>
-                        <View style={styles.refinementContainer}>
-                            <View style={styles.refinementHeader}>
-                                <TouchableOpacity onPress={() => {
-                                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                                    setRefiningImage(null);
-                                }}>
-                                    <Text style={styles.refinementCancel}>Cancel</Text>
+                        {/* Post Settings */}
+                        <View style={styles.sectionContainer}>
+                            <Text style={styles.sectionTitle}>Post Settings</Text>
+                            <View style={styles.settingsBox}>
+                                <TouchableOpacity
+                                    style={styles.settingRow}
+                                    onPress={() => setIsPublic(true)}
+                                >
+                                    <View style={styles.settingIconBox}>
+                                        <Ionicons name="globe-outline" size={20} color={isPublic ? COLORS.primary : COLORS.text} />
+                                    </View>
+                                    <View style={styles.settingInfo}>
+                                        <Text style={[styles.settingLabel, isPublic && { color: COLORS.primary }]}>Public</Text>
+                                        <Text style={styles.settingSub}>Visible to everyone on the platform</Text>
+                                    </View>
+                                    <Ionicons
+                                        name={isPublic ? "radio-button-on" : "radio-button-off"}
+                                        size={22}
+                                        color={isPublic ? COLORS.primary : "#CBD5E1"}
+                                    />
                                 </TouchableOpacity>
-                                <Text style={styles.refinementTitle}>Edit Photo</Text>
+
+                                <TouchableOpacity
+                                    style={styles.settingRow}
+                                    onPress={() => setIsPublic(false)}
+                                >
+                                    <View style={styles.settingIconBox}>
+                                        <Ionicons name="people-outline" size={20} color={!isPublic ? COLORS.primary : COLORS.text} />
+                                    </View>
+                                    <View style={styles.settingInfo}>
+                                        <Text style={[styles.settingLabel, !isPublic && { color: COLORS.primary }]}>Followers Only</Text>
+                                        <Text style={styles.settingSub}>Only your followers can see</Text>
+                                    </View>
+                                    <Ionicons
+                                        name={!isPublic ? "radio-button-on" : "radio-button-off"}
+                                        size={22}
+                                        color={!isPublic ? COLORS.primary : "#CBD5E1"}
+                                    />
+                                </TouchableOpacity>
+
+                                <View style={styles.settingRow}>
+                                    <View style={styles.settingIconBox}>
+                                        <Ionicons name="chatbubble-outline" size={20} color={COLORS.text} />
+                                    </View>
+                                    <View style={styles.settingInfo}>
+                                        <Text style={styles.settingLabel}>Allow Comments</Text>
+                                    </View>
+                                    <Switch
+                                        value={allowComments}
+                                        onValueChange={setAllowComments}
+                                        trackColor={{ false: '#CBD5E1', true: COLORS.primary }}
+                                        thumbColor={COLORS.white}
+                                    />
+                                </View>
+                            </View>
+                        </View>
+
+                        <TouchableOpacity
+                            style={[styles.postNowBtn, (!content.trim() && mediaItems.length === 0) && styles.postNowBtnDisabled]}
+                            onPress={handlePost}
+                            disabled={isPosting || (!content.trim() && mediaItems.length === 0)}
+                        >
+                            <Text style={styles.postNowBtnText}>{isPosting ? 'POSTING...' : 'POST NOW'}</Text>
+                        </TouchableOpacity>
+
+                        <View style={{ height: 40 }} />
+                    </ScrollView>
+                </View>
+            </KeyboardAvoidingView>
+
+            {/* Existing Modals for Location, Feeling, Tag */}
+            {/* Location Modal */}
+            <Modal
+                visible={showLocationModal}
+                transparent
+                animationType="slide"
+                onRequestClose={() => setShowLocationModal(false)}
+            >
+                <View style={styles.modalOverlay}>
+                    <View style={styles.modalContainer}>
+                        <View style={styles.modalHeader}>
+                            <Text style={styles.modalTitle}>Add Location</Text>
+                            <TouchableOpacity onPress={() => setShowLocationModal(false)}>
+                                <Ionicons name="close" size={24} color={COLORS.text} />
+                            </TouchableOpacity>
+                        </View>
+                        <TextInput
+                            style={styles.modalInput}
+                            placeholder="Search for a place..."
+                            placeholderTextColor={COLORS.textLight}
+                            value={locationInput}
+                            onChangeText={setLocationInput}
+                            autoFocus
+                        />
+                        {locationSuggestions.length > 0 && (
+                            <ScrollView style={{ maxHeight: 180, marginBottom: 10 }}>
+                                {locationSuggestions.map((loc) => (
+                                    <TouchableOpacity key={loc} style={{ padding: 12, borderBottomWidth: 1, borderBottomColor: '#F1F5F9' }} onPress={() => handleAddLocation(loc)}>
+                                        <Text style={{ color: COLORS.text }}>{loc}</Text>
+                                    </TouchableOpacity>
+                                ))}
+                            </ScrollView>
+                        )}
+                        <TouchableOpacity
+                            style={[styles.modalButton, !locationInput.trim() && styles.modalButtonDisabled]}
+                            onPress={() => handleAddLocation()}
+                            disabled={!locationInput.trim()}
+                        >
+                            <Text style={styles.modalButtonText}>Add Location</Text>
+                        </TouchableOpacity>
+                    </View>
+                </View>
+            </Modal>
+
+            {/* Tag Modal (General Tags) */}
+            <Modal
+                visible={showTagModal}
+                transparent
+                animationType="slide"
+                onRequestClose={() => setShowTagModal(false)}
+            >
+                <View style={styles.modalOverlay}>
+                    <View style={styles.modalContainer}>
+                        <View style={styles.modalHeader}>
+                            <Text style={styles.modalTitle}>Add Tag</Text>
+                            <TouchableOpacity onPress={() => setShowTagModal(false)}>
+                                <Ionicons name="close" size={24} color={COLORS.text} />
+                            </TouchableOpacity>
+                        </View>
+                        <TextInput
+                            style={styles.modalInput}
+                            placeholder="Enter tags (e.g., car, travel)"
+                            placeholderTextColor={COLORS.textLight}
+                            value={tagInput}
+                            onChangeText={(text) => {
+                                if (text.endsWith(',')) {
+                                    handleAddTag(text.slice(0, -1), true);
+                                } else {
+                                    setTagInput(text);
+                                }
+                            }}
+                            autoFocus
+                        />
+                        <TouchableOpacity
+                            style={[styles.modalButton, !tagInput.trim() && styles.modalButtonDisabled]}
+                            onPress={() => handleAddTag()}
+                            disabled={!tagInput.trim()}
+                        >
+                            <Text style={styles.modalButtonText}>Add Tag</Text>
+                        </TouchableOpacity>
+                    </View>
+                </View>
+            </Modal>
+
+            {/* Feeling Modal */}
+            <Modal
+                visible={showFeelingModal}
+                transparent
+                animationType="slide"
+                onRequestClose={() => setShowFeelingModal(false)}
+            >
+                <View style={styles.modalOverlay}>
+                    <View style={styles.modalContainer}>
+                        <View style={styles.modalHeader}>
+                            <Text style={styles.modalTitle}>How are you feeling?</Text>
+                            <TouchableOpacity onPress={() => setShowFeelingModal(false)}>
+                                <Ionicons name="close" size={24} color={COLORS.text} />
+                            </TouchableOpacity>
+                        </View>
+                        <ScrollView style={styles.feelingsGrid}>
+                            {feelings.map((item) => (
+                                <TouchableOpacity
+                                    key={item.label}
+                                    style={styles.feelingItem}
+                                    onPress={() => handleSelectFeeling(`${item.emoji} ${item.label}`)}
+                                >
+                                    <Text style={styles.feelingEmoji}>{item.emoji}</Text>
+                                    <Text style={styles.feelingLabel}>{item.label}</Text>
+                                </TouchableOpacity>
+                            ))}
+                        </ScrollView>
+                    </View>
+                </View>
+            </Modal>
+
+            {/* Instagram-style Refinement Modal */}
+            <Modal
+                visible={!!refiningMedia}
+                transparent
+                animationType="fade"
+                onRequestClose={() => setRefiningMedia(null)}
+            >
+                <View style={styles.refinementOverlay}>
+                    <View style={styles.refinementContainer}>
+                        <View style={styles.refinementHeader}>
+                            <TouchableOpacity onPress={() => {
+                                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                                setRefiningMedia(null);
+                                setPendingMediaItems([]);
+                            }}>
+                                <Text style={styles.refinementCancel}>Cancel</Text>
+                            </TouchableOpacity>
+                            <Text style={styles.refinementTitle}>
+                                Edit {pendingMediaItems.length > 1 ? `(${currentRefiningIndex + 1}/${pendingMediaItems.length})` : 'Media'}
+                            </Text>
+                            <View style={{ flexDirection: 'row', gap: 15 }}>
+                                {pendingMediaItems.length > 1 && (
+                                    <TouchableOpacity onPress={handleAddAllRemaining}>
+                                        <Text style={styles.refinementCancel}>Done</Text>
+                                    </TouchableOpacity>
+                                )}
                                 <TouchableOpacity onPress={() => {
                                     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-                                    handleAddRefinedImage();
+                                    handleAddRefinedMedia();
                                 }}>
-                                    <Text style={styles.refinementAdd}>Add</Text>
-                                </TouchableOpacity>
-                            </View>
-
-                            <View style={styles.previewWrapper}>
-                                <TouchableOpacity
-                                    activeOpacity={0.9}
-                                    onPress={toggleRatio}
-                                    style={[
-                                        styles.ratioPreview,
-                                        {
-                                            aspectRatio: selectedRatio,
-                                            width: SCREEN_WIDTH,
-                                        }
-                                    ]}
-                                >
-                                    <Image
-                                        source={{ uri: refiningImage || undefined }}
-                                        style={styles.fullImage}
-                                        resizeMode="cover"
-                                    />
-
-                                    <View style={styles.gridContainer} pointerEvents="none">
-                                        <View style={styles.gridLineV} />
-                                        <View style={styles.gridLineV} />
-                                        <View style={styles.gridLineH} />
-                                        <View style={styles.gridLineH} />
-                                    </View>
-
-                                    <View style={styles.fitToggleBtn} pointerEvents="none">
-                                        <Ionicons
-                                            name={selectedRatio === 1 ? "resize-outline" : "contract-outline"}
-                                            size={22}
-                                            color={COLORS.white}
-                                        />
-                                    </View>
+                                    <Text style={styles.refinementAdd}>
+                                        {currentRefiningIndex < pendingMediaItems.length - 1 ? 'Next' : 'Add'}
+                                    </Text>
                                 </TouchableOpacity>
                             </View>
                         </View>
+
+                        {renderVideoTrimmer()}
+
+                        <View style={styles.previewWrapper}>
+                            <TouchableOpacity
+                                activeOpacity={0.9}
+                                onPress={toggleRatio}
+                                style={[
+                                    styles.ratioPreview,
+                                    {
+                                        aspectRatio: selectedRatio || 1, // Fallback to square if NaN
+                                        width: SCREEN_WIDTH,
+                                        backgroundColor: '#000'
+                                    }
+                                ]}
+                            >
+                                {refiningMedia?.type === 'video' ? (
+                                    <ExpoVideo
+                                        ref={videoRef}
+                                        source={{ uri: refiningMedia.uri }}
+                                        style={styles.fullImage}
+                                        resizeMode={ResizeMode.COVER}
+                                        shouldPlay
+                                        isLooping
+                                        isMuted
+                                        onPlaybackStatusUpdate={(status: any) => {
+                                            if (status.isPlaying && status.positionMillis >= trimEnd) {
+                                                videoRef.current?.setPositionAsync(trimStart);
+                                            }
+                                        }}
+                                    />
+                                ) : (
+                                    <Image
+                                        source={{ uri: refiningMedia?.uri }}
+                                        style={styles.fullImage}
+                                        resizeMode="cover"
+                                    />
+                                )}
+
+                                <View style={styles.gridContainer} pointerEvents="none">
+                                    <View style={styles.gridLineV} />
+                                    <View style={styles.gridLineV} />
+                                    <View style={styles.gridLineH} />
+                                    <View style={[styles.gridLineH, { top: '66.66%' }]} />
+                                </View>
+
+                                <View style={styles.ratioLabelContainer}>
+                                    <Text style={styles.ratioLabelText}>
+                                        {selectedRatio === 1 ? '1:1' : selectedRatio === 0.8 ? '4:5' : selectedRatio > 1.7 ? '16:9' : 'Original'}
+                                    </Text>
+                                </View>
+
+                                <View style={styles.fitToggleBtn} pointerEvents="none">
+                                    <Ionicons
+                                        name="resize-outline"
+                                        size={22}
+                                        color={COLORS.white}
+                                    />
+                                </View>
+                            </TouchableOpacity>
+                        </View>
                     </View>
-                </Modal>
-            </View>
-        </KeyboardAvoidingView>
+                </View>
+            </Modal>
+        </View>
     );
 }
 
@@ -713,13 +1059,28 @@ const styles = StyleSheet.create({
         marginTop: 20,
     },
     mediaThumbContainer: {
+        width: 100,
+        height: 100,
         marginRight: 12,
         position: 'relative',
+        borderRadius: 12,
+        overflow: 'hidden',
+        backgroundColor: '#E2E8F0',
     },
     mediaThumb: {
         width: 100,
         height: 100,
+    },
+    videoIconOverlay: {
+        position: 'absolute',
+        top: 5,
+        right: 5,
+        backgroundColor: 'rgba(0,0,0,0.5)',
+        width: 24,
+        height: 24,
         borderRadius: 12,
+        justifyContent: 'center',
+        alignItems: 'center',
     },
     removeMediaIcon: {
         position: 'absolute',
@@ -741,6 +1102,26 @@ const styles = StyleSheet.create({
         padding: 16,
         borderWidth: 1.5,
         borderColor: '#E2E8F0',
+    },
+    inputWrapperRequired: {
+        borderColor: '#EF4444',
+        borderWidth: 2,
+    },
+    requiredLabelRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginBottom: 6,
+        marginLeft: 4,
+    },
+    requiredLabel: {
+        fontSize: 13,
+        fontWeight: '700',
+        color: '#334155',
+    },
+    requiredStar: {
+        fontSize: 12,
+        fontWeight: '600',
+        color: '#EF4444',
     },
     mainInput: {
         fontSize: 16,
@@ -1094,14 +1475,73 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
         alignItems: 'center',
     },
+    ratioLabelContainer: {
+        position: 'absolute',
+        top: 20,
+        left: 20,
+        backgroundColor: 'rgba(0,0,0,0.6)',
+        paddingHorizontal: 12,
+        paddingVertical: 6,
+        borderRadius: 20,
+    },
+    ratioLabelText: {
+        color: COLORS.white,
+        fontSize: 12,
+        fontWeight: 'bold',
+    },
+    trimmerContainer: {
+        width: '100%',
+        paddingHorizontal: 20,
+        paddingVertical: 15,
+        backgroundColor: '#000',
+    },
+    trimmerTrack: {
+        height: 40,
+        backgroundColor: 'rgba(255, 255, 255, 0.1)',
+        borderRadius: 8,
+        position: 'relative',
+        overflow: 'hidden',
+    },
+    trimmerHighlight: {
+        position: 'absolute',
+        height: '100%',
+        backgroundColor: COLORS.primary + '40',
+        borderTopWidth: 2,
+        borderBottomWidth: 2,
+        borderColor: COLORS.primary,
+    },
+    trimmerHandle: {
+        position: 'absolute',
+        width: 20,
+        height: '100%',
+        backgroundColor: COLORS.primary,
+        borderRadius: 4,
+        justifyContent: 'center',
+        alignItems: 'center',
+        zIndex: 20,
+    },
+    handleBar: {
+        width: 2,
+        height: 15,
+        backgroundColor: '#fff',
+        borderRadius: 1,
+    },
+    trimmerLabels: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        marginTop: 8,
+    },
+    trimmerTimeText: {
+        color: '#94A3B8',
+        fontSize: 11,
+        fontWeight: '500',
+    },
 });
 
-// VideoPlayer component for video preview
-import { Video, ResizeMode } from 'expo-av';
-import { useNavigation } from '@react-navigation/native';
+// VideoPlayer component for video preview (Internal helper)
 function VideoPlayer({ uri }: { uri: string }) {
     return (
-        <Video
+        <ExpoVideo
             source={{ uri }}
             style={{ width: '100%', height: '100%' }}
             useNativeControls

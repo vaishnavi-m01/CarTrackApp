@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
     View,
     Text,
@@ -6,74 +6,79 @@ import {
     ScrollView,
     TouchableOpacity,
     SafeAreaView,
+    ActivityIndicator,
+    RefreshControl,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { COLORS, SHADOWS } from '../constants/theme';
+import { LinearGradient } from 'expo-linear-gradient';
+import { COLORS, SHADOWS, SIZES } from '../constants/theme';
+import apiClient from '../api/apiClient';
 
 interface LogEntry {
     id: string;
-    type: 'Fuel' | 'Service' | 'Repair';
+    type: 'FUEL' | 'SERVICE' | 'TRIP' | 'EXPENSE' | 'REPAIR';
     title: string;
     subTitle: string;
-    details?: string;
+    amount?: number;
+    odometer?: number;
     date: string;
-    cost: string;
-    odometer: string;
-    icon: keyof typeof Ionicons.glyphMap;
-    iconColor: string;
+    extraDetails?: any;
 }
 
-const MOCK_LOGS: LogEntry[] = [
-    {
-        id: '1',
-        type: 'Service',
-        title: 'General Service',
-        subTitle: 'Hyundai Service Center, OMR',
-        details: 'Oil Change • Filter Replacement',
-        date: '12 Jan 2024',
-        cost: '₹8,450',
-        odometer: '35,000 km',
-        icon: 'build',
-        iconColor: '#6366f1',
-    },
-    {
-        id: '2',
-        type: 'Fuel',
-        title: 'Fuel Refill',
-        subTitle: 'Shell Station, Adyar',
-        details: '₹102.5/L • 18.5 L • 16.2 km/l',
-        date: '05 Jan 2024',
-        cost: '₹8,450',
-        odometer: '34,850 km',
-        icon: 'water',
-        iconColor: '#f43f5e',
-    },
-    {
-        id: '3',
-        type: 'Repair',
-        title: 'Wiper Blades Changed',
-        subTitle: 'Bosch Service',
-        date: '05 Jan 2024',
-        cost: '₹850',
-        odometer: '34,850 km',
-        icon: 'construct',
-        iconColor: '#64748b',
-    },
-];
-
-const CATEGORIES = ['All', 'Fuel', 'Service', 'Repairs'];
+const CATEGORIES = ['All', 'Fuel', 'Service', 'Trips', 'Expenses'];
 
 export default function VehicleLogsScreen({ navigation, route }: any) {
-    const vehicle = route.params?.vehicle || { brand: 'Hyundai', model: 'i20', registration: 'TN 01 AB 1234' };
+    const vehicle = route.params?.vehicle;
     const [selectedCategory, setSelectedCategory] = useState('All');
+    const [logs, setLogs] = useState<LogEntry[]>([]);
+    const [isLoading, setIsLoading] = useState(true);
+    const [refreshing, setRefreshing] = useState(false);
+
+    const fetchLogs = useCallback(async () => {
+        if (!vehicle?.id) return;
+        try {
+            const response = await apiClient.get(`/vehicles/${vehicle.id}/timeline`);
+            setLogs(response.data);
+        } catch (error) {
+            console.error('Error fetching logs:', error);
+        } finally {
+            setIsLoading(false);
+            setRefreshing(false);
+        }
+    }, [vehicle?.id]);
+
+    useEffect(() => {
+        fetchLogs();
+    }, [fetchLogs]);
+
+    const onRefresh = () => {
+        setRefreshing(true);
+        fetchLogs();
+    };
 
     const filteredLogs = useMemo(() => {
-        if (selectedCategory === 'All') return MOCK_LOGS;
-        const categoryMap: any = { 'Fuel': 'Fuel', 'Service': 'Service', 'Repairs': 'Repair' };
-        return MOCK_LOGS.filter(log => log.type === categoryMap[selectedCategory]);
-    }, [selectedCategory]);
+        if (selectedCategory === 'All') return logs;
+        const categoryMap: any = {
+            'Fuel': 'FUEL',
+            'Service': 'SERVICE',
+            'Trips': 'TRIP',
+            'Expenses': 'EXPENSE'
+        };
+        return logs.filter(log => log.type === categoryMap[selectedCategory]);
+    }, [selectedCategory, logs]);
+
+    const getLogStyle = (type: string) => {
+        switch (type) {
+            case 'FUEL': return { icon: 'water', color: '#f43f5e' };
+            case 'SERVICE': return { icon: 'build', color: '#6366f1' };
+            case 'REPAIR': return { icon: 'construct', color: '#64748b' };
+            case 'TRIP': return { icon: 'map', color: '#10b981' };
+            default: return { icon: 'receipt', color: COLORS.primary };
+        }
+    };
 
     const renderLogItem = (log: LogEntry, index: number) => {
+        const style = getLogStyle(log.type);
         const isFiltered = selectedCategory !== 'All';
 
         return (
@@ -81,40 +86,55 @@ export default function VehicleLogsScreen({ navigation, route }: any) {
                 {/* Timeline Line - Hide when filtered */}
                 {!isFiltered && (
                     <View style={styles.timelineContainer}>
-                        <View style={[styles.timelineIconCircle, { backgroundColor: log.iconColor + '15' }]}>
-                            <Ionicons name={log.icon as any} size={16} color={log.iconColor} />
+                        <View style={[styles.timelineIconCircle, { backgroundColor: style.color + '15' }]}>
+                            <Ionicons name={style.icon as any} size={15} color={style.color} />
                         </View>
                         {index !== filteredLogs.length - 1 && <View style={styles.timelineLine} />}
                     </View>
                 )}
 
-                {/* Content Card - Simplified Border Only */}
+                {/* Content Card */}
                 <View style={[
                     styles.logCard,
-                    isFiltered && { marginLeft: 0 } // Remove gap when timeline is gone
+                    isFiltered && { marginLeft: 0 }
                 ]}>
                     <View style={styles.logCardHeader}>
                         <View style={styles.logMainInfo}>
+                            <View style={styles.typeRow}>
+                                <Text style={[styles.typeBadge, { backgroundColor: style.color + '15', color: style.color }]}>
+                                    {log.type.charAt(0) + log.type.slice(1).toLowerCase()}
+                                </Text>
+                                <Text style={styles.logDate}>{log.date}</Text>
+                            </View>
                             <Text style={styles.logTitle}>{log.title}</Text>
-                            <Text style={styles.logSubTitle}>{log.subTitle}</Text>
+                            <Text style={styles.logSubTitle} numberOfLines={1}>{log.subTitle || 'No notes'}</Text>
                         </View>
-                        <Text style={styles.logCost}>{log.cost}</Text>
+                        <View style={{ alignItems: 'flex-end' }}>
+                            {log.amount && (
+                                <Text style={styles.logCost} numberOfLines={1}>₹{log.amount.toLocaleString()}</Text>
+                            )}
+                            {log.odometer && (
+                                <Text style={styles.logOdo} numberOfLines={1}>{log.odometer.toLocaleString()} km</Text>
+                            )}
+                        </View>
                     </View>
 
-                    {log.details && (
+                    {log.extraDetails && (
                         <View style={styles.detailsRow}>
-                            <Text style={styles.detailsText}>{log.details}</Text>
+                            <Text style={styles.detailsText}>{log.extraDetails.toString()}</Text>
                         </View>
                     )}
-
-                    <View style={styles.logFooter}>
-                        <Text style={styles.footerText}>{log.date}</Text>
-                        <Text style={styles.footerText}>{log.odometer}</Text>
-                    </View>
                 </View>
             </View>
         );
     };
+
+    React.useLayoutEffect(() => {
+        navigation.setOptions({
+            title: 'Vehicle Logs',
+            headerSubtitle: vehicle ? `${vehicle.brand} ${vehicle.model} • ${vehicle.registration}` : '',
+        } as any);
+    }, [navigation, vehicle]);
 
     return (
         <SafeAreaView style={styles.container}>
@@ -127,13 +147,13 @@ export default function VehicleLogsScreen({ navigation, route }: any) {
                             onPress={() => setSelectedCategory(cat)}
                             activeOpacity={0.7}
                             style={[
-                                styles.categoryChip,
-                                selectedCategory === cat && styles.categoryChipActive
+                                styles.categoryPill,
+                                selectedCategory === cat && styles.categoryPillActive
                             ]}
                         >
                             <Text style={[
-                                styles.categoryText,
-                                selectedCategory === cat && styles.categoryTextActive
+                                styles.categoryPillText,
+                                selectedCategory === cat && styles.categoryPillTextActive
                             ]}>
                                 {cat}
                             </Text>
@@ -143,9 +163,16 @@ export default function VehicleLogsScreen({ navigation, route }: any) {
             </View>
 
             {/* Logs List */}
-            <ScrollView style={styles.logsList} contentContainerStyle={styles.logsListContent} showsVerticalScrollIndicator={false}>
+            <ScrollView
+                style={styles.logsList}
+                contentContainerStyle={styles.logsListContent}
+                showsVerticalScrollIndicator={false}
+                refreshControl={
+                    <RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={[COLORS.primary]} />
+                }
+            >
                 {/* Vehicle Quick Info Section */}
-                <View style={styles.vehicleQuickInfo}>
+                {/* <View style={styles.vehicleQuickInfo}>
                     <View style={styles.infoIconBox}>
                         <Ionicons
                             name={vehicle.vehicleType === 'bike' ? 'bicycle' : 'car'}
@@ -157,177 +184,73 @@ export default function VehicleLogsScreen({ navigation, route }: any) {
                         <Text style={styles.quickBrand}>{vehicle.brand} {vehicle.model}</Text>
                         <Text style={styles.quickReg}>{vehicle.registration}</Text>
                     </View>
+                </View> */}
+
+                <View style={styles.sectionHeader}>
+                    <Text style={styles.sectionTitle}>Timeline Activity</Text>
                 </View>
 
-                <Text style={styles.sectionTitle}>Recent Activities</Text>
-                {filteredLogs.map((log, index) => renderLogItem(log, index))}
+                {isLoading ? (
+                    <ActivityIndicator size="large" color={COLORS.primary} style={{ marginTop: 50 }} />
+                ) : filteredLogs.length === 0 ? (
+                    <View style={styles.emptyContainer}>
+                        <Ionicons name="document-text-outline" size={60} color="#CBD5E1" />
+                        <Text style={styles.emptyText}>No logs found for this car</Text>
+                    </View>
+                ) : (
+                    filteredLogs.map((log, index) => renderLogItem(log, index))
+                )}
             </ScrollView>
+
+
         </SafeAreaView>
     );
 }
 
 const styles = StyleSheet.create({
-    container: {
-        flex: 1,
-        backgroundColor: '#FCFCFC',
-    },
+    container: { flex: 1, backgroundColor: '#FCFCFC' },
     vehicleQuickInfo: {
         flexDirection: 'row',
         alignItems: 'center',
         backgroundColor: COLORS.white,
         padding: 16,
-        borderRadius: 12,
-        marginBottom: 24,
+        borderRadius: 16,
+        marginBottom: 20,
+        ...SHADOWS.light,
         borderWidth: 1,
-        borderColor: '#E2E8F0',
+        borderColor: '#f1f5f9'
     },
-    infoIconBox: {
-        width: 48,
-        height: 48,
-        borderRadius: 10,
-        backgroundColor: '#F8FAFC',
-        justifyContent: 'center',
-        alignItems: 'center',
-        marginRight: 16,
-        borderWidth: 1,
-        borderColor: '#E2E8F0',
-    },
-    quickBrand: {
-        fontSize: 16,
-        fontWeight: 'bold',
-        color: COLORS.text,
-    },
-    quickReg: {
-        fontSize: 12,
-        color: COLORS.textLight,
-        marginTop: 1,
-    },
-    categoriesContainer: {
-        paddingVertical: 12,
-        backgroundColor: COLORS.white,
-        borderBottomWidth: 1,
-        borderBottomColor: '#F1F5F9',
-    },
-    categoriesScroll: {
-        paddingHorizontal: 16,
-    },
-    categoryChip: {
-        paddingHorizontal: 18,
-        paddingVertical: 8,
-        borderRadius: 8,
-        marginRight: 8,
-        backgroundColor: '#fff',
-        borderWidth: 1,
-        borderColor: '#E2E8F0',
-    },
-    categoryChipActive: {
-        backgroundColor: COLORS.primary,
-        borderColor: COLORS.primary,
-    },
-    categoryText: {
-        fontSize: 13,
-        fontWeight: '600',
-        color: COLORS.textLight,
-    },
-    categoryTextActive: {
-        color: '#fff',
-    },
-    logsList: {
-        flex: 1,
-    },
-    logsListContent: {
-        paddingHorizontal: 16,
-        paddingTop: 16,
-        paddingBottom: 40,
-    },
-    sectionTitle: {
-        fontSize: 12,
-        fontWeight: 'bold',
-        color: COLORS.textLight,
-        textTransform: 'uppercase',
-        letterSpacing: 1,
-        marginBottom: 16,
-    },
-    logContainer: {
-        flexDirection: 'row',
-        marginBottom: 0,
-    },
-    timelineContainer: {
-        alignItems: 'center',
-        width: 32,
-        marginRight: 12,
-    },
-    timelineIconCircle: {
-        width: 28,
-        height: 28,
-        borderRadius: 14,
-        justifyContent: 'center',
-        alignItems: 'center',
-        zIndex: 2,
-        backgroundColor: '#F8FAFC',
-        borderWidth: 1,
-        borderColor: '#E2E8F0',
-    },
-    timelineLine: {
-        flex: 1,
-        width: 1,
-        backgroundColor: '#E2E8F0',
-        marginVertical: 2,
-    },
-    logCard: {
-        flex: 1,
-        backgroundColor: '#fff',
-        borderRadius: 12,
-        padding: 16,
-        marginBottom: 16,
-        borderWidth: 1,
-        borderColor: '#E2E8F0',
-    },
-    logCardHeader: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'flex-start',
-    },
-    logMainInfo: {
-        flex: 1,
-        marginRight: 12,
-    },
-    logTitle: {
-        fontSize: 15,
-        fontWeight: 'bold',
-        color: COLORS.text,
-    },
-    logSubTitle: {
-        fontSize: 12,
-        color: COLORS.textLight,
-        marginTop: 2,
-    },
-    logCost: {
-        fontSize: 15,
-        fontWeight: 'bold',
-        color: COLORS.text,
-    },
-    detailsRow: {
-        marginTop: 10,
-        backgroundColor: '#F8FAFC',
-        paddingVertical: 4,
-        paddingHorizontal: 8,
-        borderRadius: 4,
-        alignSelf: 'flex-start',
-        borderWidth: 1,
-        borderColor: '#F1F5F9',
-    },
-    detailsText: {
-        fontSize: 10,
-        color: COLORS.textLight,
-    },
-    logFooter: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        marginTop: 12,
-    },
-    footerText: {
-        fontSize: 11,
-        color: COLORS.textExtraLight,
-    },
+    infoIconBox: { width: 48, height: 48, borderRadius: 12, backgroundColor: '#F8FAFC', justifyContent: 'center', alignItems: 'center', marginRight: 15, borderWidth: 1, borderColor: '#e2e8f0' },
+    quickBrand: { fontSize: 16, fontWeight: 'bold', color: COLORS.text },
+    quickReg: { fontSize: 13, color: COLORS.textLight, marginTop: 2 },
+    categoriesContainer: { paddingVertical: 12, backgroundColor: COLORS.white, borderBottomWidth: 1, borderBottomColor: '#F1F5F9' },
+    categoriesScroll: { paddingHorizontal: 16, gap: 8 },
+    categoryPill: { paddingHorizontal: 16, paddingVertical: 8, borderRadius: 10, backgroundColor: '#f8fafc', borderWidth: 1, borderColor: '#e2e8f0' },
+    categoryPillActive: { backgroundColor: COLORS.primary, borderColor: COLORS.primary },
+    categoryPillText: { fontSize: 12, fontWeight: '600', color: COLORS.textLight },
+    categoryPillTextActive: { color: COLORS.white },
+    logsList: { flex: 1 },
+    logsListContent: { paddingHorizontal: 16, paddingTop: 20, paddingBottom: 100 },
+    sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 15 },
+    sectionTitle: { fontSize: 13, fontWeight: 'bold', color: COLORS.textLight, textTransform: 'uppercase', letterSpacing: 0.5 },
+    logContainer: { flexDirection: 'row' },
+    timelineContainer: { alignItems: 'center', width: 32, marginRight: 12 },
+    timelineIconCircle: { width: 30, height: 30, borderRadius: 15, justifyContent: 'center', alignItems: 'center', zIndex: 2, backgroundColor: COLORS.white, borderWidth: 1, borderColor: '#E2E8F0' },
+    timelineLine: { flex: 1, width: 2, backgroundColor: '#F1F5F9', marginVertical: 2 },
+    logCard: { flex: 1, backgroundColor: COLORS.white, borderRadius: 12, padding: 16, marginBottom: 16, borderWidth: 1, borderColor: '#F1F5F9', ...SHADOWS.light },
+    logCardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
+    logMainInfo: { flex: 1, marginRight: 12 },
+    typeRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6 },
+    typeBadge: { fontSize: 10, fontWeight: 'bold', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 4, textTransform: 'uppercase' },
+    logDate: { fontSize: 11, color: COLORS.textLight },
+    logTitle: { fontSize: 15, fontWeight: 'bold', color: COLORS.text },
+    logSubTitle: { fontSize: 12, color: COLORS.textLight, marginTop: 3 },
+    logCost: { fontSize: 16, fontWeight: 'bold', color: COLORS.text },
+    logOdo: { fontSize: 12, color: COLORS.textLight, marginTop: 2 },
+    detailsRow: { marginTop: 12, backgroundColor: '#F8FAFC', padding: 8, borderRadius: 8 },
+    detailsText: { fontSize: 11, color: COLORS.textLight, fontStyle: 'italic' },
+    emptyContainer: { alignItems: 'center', justifyContent: 'center', marginTop: 80 },
+    emptyText: { marginTop: 10, color: COLORS.textLight, fontSize: 14 },
+    fab: { position: 'absolute', bottom: 30, right: 20, borderRadius: 28, ...SHADOWS.medium },
+    fabGradient: { width: 56, height: 56, borderRadius: 28, justifyContent: 'center', alignItems: 'center' },
 });

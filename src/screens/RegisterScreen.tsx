@@ -10,6 +10,7 @@ import {
     ScrollView,
     Alert,
     ToastAndroid,
+    Switch,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
@@ -43,6 +44,8 @@ export default function RegisterScreen({ navigation }: RegisterScreenProps) {
     const [showPassword, setShowPassword] = useState(false);
     const [showConfirmPassword, setShowConfirmPassword] = useState(false);
     const [isLoading, setIsLoading] = useState(false);
+    const [bio, setBio] = useState('');
+    const [isPrivate, setIsPrivate] = useState(true); // default to true since it's a private tracker app? or false. Let's say false by default to match db.
 
     // Fetch roles on component mount
     useEffect(() => {
@@ -130,7 +133,9 @@ export default function RegisterScreen({ navigation }: RegisterScreenProps) {
                 email: email.trim(),
                 password: password,
                 activeStatus: true,
-                roleId: userRole.id
+                roleId: userRole.id,
+                bio: bio.trim(),
+                isPrivate: isPrivate
             };
 
             const response = await apiClient.post("users", registrationData);
@@ -291,6 +296,36 @@ export default function RegisterScreen({ navigation }: RegisterScreenProps) {
                             {errors.confirmPassword ? <Text style={styles.errorText}>{errors.confirmPassword}</Text> : null}
                         </View>
 
+                        {/* Bio Input */}
+                        <View style={{ marginBottom: 16 }}>
+                            <View style={[styles.inputContainer, { height: 80, alignItems: 'flex-start', paddingTop: 10 }]}>
+                                <TextInput
+                                    style={[styles.input, { textAlignVertical: 'top', height: '100%', paddingTop: 0 }]}
+                                    placeholder="Bio (Optional)"
+                                    placeholderTextColor="rgba(255,255,255,0.5)"
+                                    value={bio}
+                                    onChangeText={setBio}
+                                    multiline
+                                    numberOfLines={3}
+                                    selectionColor={COLORS.white}
+                                />
+                            </View>
+                        </View>
+
+                        {/* Private Account Switch */}
+                        <View style={styles.switchContainer}>
+                            <View>
+                                <Text style={styles.switchLabel}>Private Account</Text>
+                                <Text style={styles.switchSubLabel}>Only approved followers can see your posts</Text>
+                            </View>
+                            <Switch
+                                trackColor={{ false: 'rgba(255,255,255,0.2)', true: COLORS.primary }}
+                                thumbColor={isPrivate ? COLORS.white : '#f4f3f4'}
+                                onValueChange={setIsPrivate}
+                                value={isPrivate}
+                            />
+                        </View>
+
 
 
                         {/* Register Button */}
@@ -448,5 +483,26 @@ const styles = StyleSheet.create({
     },
     placeholderText: {
         color: 'rgba(255,255,255,0.5)',
+    },
+    switchContainer: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        backgroundColor: 'rgba(255,255,255,0.05)',
+        padding: 16,
+        borderRadius: 12,
+        marginBottom: 20,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.1)',
+    },
+    switchLabel: {
+        color: COLORS.white,
+        fontSize: 16,
+        fontWeight: 'bold',
+        marginBottom: 4,
+    },
+    switchSubLabel: {
+        color: 'rgba(255,255,255,0.5)',
+        fontSize: 12,
     },
 });

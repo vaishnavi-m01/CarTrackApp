@@ -14,11 +14,11 @@ import { useAuth } from '../context/AuthContext';
 export default function StoryList({ storyGroups, onAddStory, onViewStory }: StoryListProps) {
     const { user } = useAuth();
 
-    // Find my story group
-    const myStoryGroup = user ? storyGroups.find(g => g.userId === user.id) : undefined;
+    // Find my story group - using String() for robust comparison
+    const myStoryGroup = user ? storyGroups.find(g => String(g.userId) === String(user.id)) : undefined;
 
     // Filter out my story from others
-    const otherStories = user ? storyGroups.filter(g => g.userId !== user.id) : storyGroups;
+    const otherStories = user ? storyGroups.filter(g => String(g.userId) !== String(user.id)) : storyGroups;
 
     return (
         <View style={styles.container}>
@@ -31,7 +31,8 @@ export default function StoryList({ storyGroups, onAddStory, onViewStory }: Stor
                 {myStoryGroup ? (
                     <StoryCircle
                         userName="Your Story"
-                        userAvatar={myStoryGroup.userAvatar}
+                        userInitial={user?.name?.charAt(0) || user?.username?.charAt(0)}
+                        userAvatar={myStoryGroup.userAvatar || user?.profilePicUrl}
                         hasUnviewed={myStoryGroup.hasUnviewed}
                         onPress={() => onViewStory(myStoryGroup)}
                         onAddPress={onAddStory}
@@ -39,7 +40,9 @@ export default function StoryList({ storyGroups, onAddStory, onViewStory }: Stor
                 ) : (
                     <StoryCircle
                         userName="Your Story"
+                        userInitial={user?.name?.charAt(0) || user?.username?.charAt(0)}
                         isAddStory
+                        userAvatar={user?.profilePicUrl}
                         hasUnviewed={false}
                         onPress={onAddStory}
                     />
@@ -50,6 +53,7 @@ export default function StoryList({ storyGroups, onAddStory, onViewStory }: Stor
                     <StoryCircle
                         key={group.userId}
                         userName={group.userName}
+                        userInitial={group.userName?.charAt(0)}
                         userAvatar={group.userAvatar}
                         hasUnviewed={group.hasUnviewed}
                         onPress={() => onViewStory(group)}

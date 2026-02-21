@@ -15,6 +15,8 @@ import { useFocusEffect } from '@react-navigation/native';
 import { useApp } from '../context/AppContext';
 import { COLORS, SIZES, SHADOWS } from '../constants/theme';
 import apiClient from '../api/apiClient';
+import Feather from '@expo/vector-icons/Feather';
+
 
 export default function TripsScreen({ navigation, route }: { navigation: any, route: any }) {
     const { vehicles } = useApp();
@@ -145,7 +147,8 @@ export default function TripsScreen({ navigation, route }: { navigation: any, ro
                                                             onPress={() => navigation.navigate('AddTrip', { trip })}
                                                             style={styles.actionBtn}
                                                         >
-                                                            <Ionicons name="pencil" size={16} color={COLORS.textLight} />
+                                                            {/* <Ionicons name="pencil" size={16} color={COLORS.textLight} /> */}
+                                                            <Feather name="edit" size={18} color={COLORS.textLight} />
                                                         </TouchableOpacity>
                                                         <TouchableOpacity
                                                             onPress={() => handleDeleteTrip(trip.id)}

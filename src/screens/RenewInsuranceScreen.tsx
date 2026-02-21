@@ -6,7 +6,6 @@ import {
     ScrollView,
     TouchableOpacity,
     TextInput,
-    Alert,
     KeyboardAvoidingView,
     Platform,
     Keyboard,
@@ -53,20 +52,20 @@ export default function RenewInsuranceScreen({ navigation, route }: { navigation
 
     const handleSubmit = async () => {
         if (!selectedVehicleId) {
-            Alert.alert('Error', 'Please select a vehicle');
+            if (Platform.OS === 'android') ToastAndroid.show('Please select a vehicle', ToastAndroid.SHORT);
             return;
         }
         if (!policyNumber.trim()) {
-            Alert.alert('Error', 'Please enter policy number');
+            if (Platform.OS === 'android') ToastAndroid.show('Please enter policy number', ToastAndroid.SHORT);
             return;
         }
         if (!provider.trim()) {
-            Alert.alert('Error', 'Please enter insurance provider');
+            if (Platform.OS === 'android') ToastAndroid.show('Please enter insurance provider', ToastAndroid.SHORT);
             return;
         }
         const amt = parseFloat(amount.replace(/,/g, ''));
         if (!amount || isNaN(amt) || amt <= 0) {
-            Alert.alert('Error', 'Please enter a valid premium amount');
+            if (Platform.OS === 'android') ToastAndroid.show('Please enter a valid premium amount', ToastAndroid.SHORT);
             return;
         }
 
@@ -101,7 +100,9 @@ export default function RenewInsuranceScreen({ navigation, route }: { navigation
             }
         } catch (error) {
             console.error('Error saving insurance:', error);
-            Alert.alert('Error', 'Failed to save insurance policy. Please try again.');
+            if (Platform.OS === 'android') {
+                ToastAndroid.show('Failed to save insurance policy', ToastAndroid.SHORT);
+            }
         } finally {
             setIsSaving(false);
         }

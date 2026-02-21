@@ -12,24 +12,28 @@ import { Video, ResizeMode } from 'expo-av';
 import { Ionicons } from '@expo/vector-icons';
 import { COLORS, SIZES, SHADOWS } from '../constants/theme';
 import { CommunityPost } from '../types/Community';
+import { useApp } from '../context/AppContext';
 
-import { useNavigation } from '@react-navigation/native';
+import { useAuth } from '../context/AuthContext';
+import { useNavigation, useRoute } from '@react-navigation/native';
 import { StackNavigationProp } from '@react-navigation/stack';
 import { RootStackParamList } from '../navigation/MainNavigator';
 
 const { width } = Dimensions.get('window');
 const MEDIA_WIDTH = width;
+const FEED_VIDEO_HEIGHT = 350;
 
 interface CommunityPostCardProps {
     post: CommunityPost;
-    onLike: (postId: string) => void;
-    onComment: (postId: string) => void;
-    onShare: (postId: string) => void;
-    onEdit?: (postId: string) => void;
-    onDelete?: (postId: string) => void;
-    onImagePress?: (postId: string) => void;
+    onLike: (postId: string | number) => void;
+    onComment: (postId: string | number) => void;
+    onShare: (postId: string | number) => void;
+    onEdit?: (postId: string | number) => void;
+    onDelete?: (postId: string | number) => void;
+    onImagePress?: (postId: string | number) => void;
     isSaved?: boolean;
-    onToggleSave?: (postId: string) => void;
+    onToggleSave?: () => void;
+    isActive?: boolean;
 }
 
 export default function CommunityPostCard({
@@ -41,18 +45,25 @@ export default function CommunityPostCard({
     onDelete,
     onImagePress,
     isSaved,
-    onToggleSave
+    onToggleSave,
+    isActive = true
 }: CommunityPostCardProps) {
     const [currentMediaIndex, setCurrentMediaIndex] = useState(0);
-    const [videoPlaying, setVideoPlaying] = useState(false);
-    const [menuVisible, setMenuVisible] = useState(false);
+    const [isMuted, setIsMuted] = useState(true);
+    const [playbackStatus, setPlaybackStatus] = useState<any>(null);
+    const [isMenuVisible, setIsMenuVisible] = useState(false);
     const [expanded, setExpanded] = useState(false);
     const [numLines, setNumLines] = useState(0);
     const navigation = useNavigation<StackNavigationProp<RootStackParamList>>();
+    const { user } = useAuth();
+    const { vehicles } = useApp();
+
+    const taggedVehicle = post.vehicleId ? vehicles.find(v => v.id === post.vehicleId.toString()) : null;
+    const vehicleInfoDisplay = taggedVehicle ? `${taggedVehicle.year} ${taggedVehicle.brand} ${taggedVehicle.model}` : undefined;
 
     const handleProfilePress = () => {
         navigation.navigate('OtherUserProfile', {
-            userId: post.userId,
+            userId: post.userId.toString(),
             userName: post.userName
         });
     };
@@ -75,28 +86,44 @@ export default function CommunityPostCard({
         const itemRatio = item.aspectRatio || 0;
         let dynamicHeight = 400; // Default
 
-        if (itemRatio === 1) {
+        if (itemRatio >= 0.95 && itemRatio <= 1.05) {
             dynamicHeight = width; // Square
-        } else if (itemRatio === 0.8) {
+        } else if (itemRatio >= 0.75 && itemRatio < 0.95) {
             dynamicHeight = width / 0.8; // Portrait 4:5
-        } else if (itemRatio === 1.91) {
-            dynamicHeight = width / 1.91; // Landscape
+        } else if (itemRatio > 1.2) {
+            dynamicHeight = width / (itemRatio > 1.7 ? 1.77 : itemRatio); // Landscape (capped at 16:9)
         }
 
+        const mediaUri = item.mediaUrl || item.uri;
+        if (!mediaUri) return null;
+
         const content = item.type === 'video' ? (
-            <View style={[styles.mediaContainer, { height: dynamicHeight }]}>
+            <View style={[styles.mediaContainer, { height: FEED_VIDEO_HEIGHT }]}>
                 <Video
-                    source={{ uri: item.uri }}
-                    style={styles.videoPlayer}
-                    useNativeControls
+                    source={{ uri: mediaUri }}
+                    style={[styles.videoPlayer, { height: FEED_VIDEO_HEIGHT }]}
                     resizeMode={ResizeMode.COVER}
                     isLooping
-                    shouldPlay={videoPlaying}
+                    shouldPlay={isActive && currentMediaIndex === post.media.indexOf(item)}
+                    isMuted={isMuted}
+                    onPlaybackStatusUpdate={(status) => setPlaybackStatus(status)}
                 />
+
+                {/* Mute/Unmute Icon overlay */}
+                <TouchableOpacity
+                    style={styles.feedMuteBtn}
+                    onPress={() => setIsMuted(!isMuted)}
+                >
+                    <Ionicons
+                        name={isMuted ? "volume-mute" : "volume-high"}
+                        size={14}
+                        color="#fff"
+                    />
+                </TouchableOpacity>
             </View>
         ) : (
             <Image
-                source={{ uri: item.uri }}
+                source={{ uri: mediaUri }}
                 style={[styles.mediaImage, { height: dynamicHeight }]}
                 resizeMode={item.resizeMode || 'cover'}
             />
@@ -111,6 +138,14 @@ export default function CommunityPostCard({
             </TouchableOpacity>
         );
     };
+
+    const normalizeTags = (tags: string | string[] | undefined): string[] => {
+        if (!tags) return [];
+        if (Array.isArray(tags)) return tags;
+        return tags.split(',').map(tag => tag.trim()).filter(Boolean);
+    };
+
+    const postTags = normalizeTags(post.tags);
 
     return (
         <View style={styles.card}>
@@ -140,9 +175,9 @@ export default function CommunityPostCard({
                             )}
                         </View>
                         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, flexWrap: 'wrap', flex: 1 }}>
-                            {post.vehicleInfo && (
+                            {vehicleInfoDisplay && (
                                 <>
-                                    <Text style={[styles.vehicleInfo, { flexShrink: 1 }]} numberOfLines={1}>{post.vehicleInfo}</Text>
+                                    <Text style={[styles.vehicleInfo, { flexShrink: 1 }]} numberOfLines={1}>{vehicleInfoDisplay}</Text>
                                     <Text style={styles.timestamp}>•</Text>
                                 </>
                             )}
@@ -155,57 +190,70 @@ export default function CommunityPostCard({
                                     <Text style={styles.timestamp}>•</Text>
                                 </>
                             )}
-                            <Text style={styles.timestamp}>{formatTime(post.timestamp)}</Text>
+                            <Text style={styles.timestamp}>{formatTime(post.createdAt)}</Text>
                         </View>
                     </View>
                 </TouchableOpacity>
-                {(onEdit || onDelete) && (
-                    <View style={styles.menuWrapper}>
-                        <TouchableOpacity
-                            onPress={() => setMenuVisible(!menuVisible)}
-                            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                        >
-                            <Ionicons name="ellipsis-horizontal" size={20} color={COLORS.text} />
-                        </TouchableOpacity>
+                <View style={styles.menuWrapper}>
+                    <TouchableOpacity
+                        onPress={() => setIsMenuVisible(!isMenuVisible)}
+                        hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                    >
+                        <Ionicons name="ellipsis-vertical" size={20} color={COLORS.text} />
+                    </TouchableOpacity>
 
-                        {menuVisible && (
-                            <>
-                                <TouchableOpacity
-                                    style={styles.menuBackdrop}
-                                    activeOpacity={1}
-                                    onPress={() => setMenuVisible(false)}
-                                />
-                                <View style={styles.popupMenu}>
-                                    {onEdit && (
+                    {isMenuVisible && (
+                        <>
+                            <TouchableOpacity
+                                style={styles.menuBackdrop}
+                                onPress={() => setIsMenuVisible(false)}
+                                activeOpacity={1}
+                            />
+                            <View style={styles.popupMenu}>
+                                {onEdit && (
+                                    <TouchableOpacity
+                                        style={styles.popupMenuItem}
+                                        onPress={() => {
+                                            setIsMenuVisible(false);
+                                            onEdit(post.id);
+                                        }}
+                                    >
+                                        <Ionicons name="create-outline" size={20} color={COLORS.text} />
+                                        <Text style={styles.popupMenuText}>Edit Post</Text>
+                                    </TouchableOpacity>
+                                )}
+                                {onEdit && onDelete && <View style={styles.popupMenuDivider} />}
+                                {onDelete && (
+                                    <TouchableOpacity
+                                        style={styles.popupMenuItem}
+                                        onPress={() => {
+                                            setIsMenuVisible(false);
+                                            onDelete(post.id);
+                                        }}
+                                    >
+                                        <Ionicons name="trash-outline" size={20} color={COLORS.danger} />
+                                        <Text style={[styles.popupMenuText, { color: COLORS.danger }]}>Delete Post</Text>
+                                    </TouchableOpacity>
+                                )}
+                                {(!onEdit || !onDelete) && (
+                                    <>
+                                        {(onEdit || onDelete) && <View style={styles.popupMenuDivider} />}
                                         <TouchableOpacity
                                             style={styles.popupMenuItem}
                                             onPress={() => {
-                                                setMenuVisible(false);
-                                                onEdit(post.id);
+                                                setIsMenuVisible(false);
+                                                onShare(post.id);
                                             }}
                                         >
-                                            <Ionicons name="create-outline" size={18} color={COLORS.primary} />
-                                            <Text style={styles.popupMenuText}>Edit</Text>
+                                            <Ionicons name="share-social-outline" size={20} color={COLORS.text} />
+                                            <Text style={styles.popupMenuText}>Share Post</Text>
                                         </TouchableOpacity>
-                                    )}
-                                    {onEdit && onDelete && <View style={styles.popupMenuDivider} />}
-                                    {onDelete && (
-                                        <TouchableOpacity
-                                            style={styles.popupMenuItem}
-                                            onPress={() => {
-                                                setMenuVisible(false);
-                                                onDelete(post.id);
-                                            }}
-                                        >
-                                            <Ionicons name="trash-outline" size={18} color={COLORS.danger} />
-                                            <Text style={[styles.popupMenuText, { color: COLORS.danger }]}>Delete</Text>
-                                        </TouchableOpacity>
-                                    )}
-                                </View>
-                            </>
-                        )}
-                    </View>
-                )}
+                                    </>
+                                )}
+                            </View>
+                        </>
+                    )}
+                </View>
             </View>
 
             {/* Media Gallery */}
@@ -282,11 +330,11 @@ export default function CommunityPostCard({
 
                 <TouchableOpacity
                     style={styles.actionBtn}
-                    onPress={() => onToggleSave?.(post.id)}
+                    onPress={() => onToggleSave?.()}
                 >
                     <Ionicons
                         name={isSaved ? "bookmark" : "bookmark-outline"}
-                        size={22}
+                        size={24}
                         color={isSaved ? COLORS.primary : COLORS.text}
                     />
                 </TouchableOpacity>
@@ -296,10 +344,9 @@ export default function CommunityPostCard({
             <View style={styles.contentContainer}>
                 {post.content ? (
                     <View style={styles.captionRow}>
-                        <Text style={styles.captionUserName}>{post.userName.toLowerCase().replace(/\s+/g, '_')} </Text>
                         <Text
                             style={styles.content}
-                            numberOfLines={expanded ? undefined : 4}
+                            numberOfLines={expanded ? undefined : 2}
                             onTextLayout={(e) => {
                                 if (!expanded) {
                                     setNumLines(e.nativeEvent.lines.length);
@@ -308,7 +355,7 @@ export default function CommunityPostCard({
                         >
                             {post.content}
                         </Text>
-                        {numLines >= 4 && !expanded && (
+                        {numLines >= 2 && !expanded && (
                             <TouchableOpacity onPress={() => setExpanded(true)}>
                                 <Text style={styles.moreText}> ...more</Text>
                             </TouchableOpacity>
@@ -322,15 +369,15 @@ export default function CommunityPostCard({
                 ) : null}
 
                 {/* Tags */}
-                {post.tags && post.tags.length > 0 && (
+                {postTags.length > 0 && (
                     <View style={styles.tagsContainer}>
-                        {post.tags.map((tag, index) => (
+                        {postTags.map((tag, index) => (
                             <Text key={index} style={styles.tagText}>#{tag.replace(/^#+/, '')} </Text>
                         ))}
                     </View>
                 )}
 
-                <Text style={styles.timestampBottom}>{formatTime(post.timestamp)}</Text>
+                {/* <Text style={styles.timestampBottom}>{formatTime(post.createdAt)}</Text> */}
             </View>
         </View>
     );
@@ -533,5 +580,29 @@ const styles = StyleSheet.create({
         fontSize: 14,
         fontWeight: '600',
         color: COLORS.text,
+    },
+    feedMuteBtn: {
+        position: 'absolute',
+        bottom: 12,
+        right: 12,
+        backgroundColor: 'rgba(0,0,0,0.5)',
+        width: 26,
+        height: 26,
+        borderRadius: 13,
+        justifyContent: 'center',
+        alignItems: 'center',
+        zIndex: 5,
+    },
+    feedProgressLineContainer: {
+        position: 'absolute',
+        bottom: 0,
+        left: 0,
+        right: 0,
+        height: 2,
+        backgroundColor: 'rgba(255,255,255,0.2)',
+    },
+    feedProgressLine: {
+        height: '100%',
+        backgroundColor: COLORS.primary,
     },
 });

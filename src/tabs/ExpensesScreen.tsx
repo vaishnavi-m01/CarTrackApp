@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
     View,
     Text,
@@ -14,35 +14,89 @@ import { useNavigation } from '@react-navigation/native';
 import { StackNavigationProp } from '@react-navigation/stack';
 import { RootStackParamList } from '../navigation/MainNavigator';
 import { useBottomTabBarHeight } from '@react-navigation/bottom-tabs';
+import DateTimePicker from '@react-native-community/datetimepicker';
 
 
 import { useApp } from '../context/AppContext';
 import { Modal } from 'react-native';
+import apiClient from '../api/apiClient';
 
 export default function ExpensesScreen() {
     const navigation = useNavigation<StackNavigationProp<RootStackParamList>>();
     const [selectedPeriod, setSelectedPeriod] = useState('Month');
     const tabBarHeight = useBottomTabBarHeight();
-    const periods = ['Week', 'Month', 'Year'];
+    const periods = ['Week', 'Month', 'Year', 'Custom'];
 
-    const { expenses, vehicles } = useApp();
+    const { expenses, vehicles, fetchExpenses, isLoading } = useApp();
     const [selectedVehicleId, setSelectedVehicleId] = useState<string | null>(null);
     const [isVehicleModalVisible, setVehicleModalVisible] = useState(false);
+    const [activeDateRange, setActiveDateRange] = useState({ start: '', end: '' });
 
-    // Filter expenses based on selection
-    const filteredExpenses = selectedVehicleId
-        ? expenses.filter(e => e.vehicleId === selectedVehicleId)
-        : expenses;
+    // Custom range states
+    const [customStartDate, setCustomStartDate] = useState(new Date(new Date().setDate(new Date().getDate() - 7)));
+    const [customEndDate, setCustomEndDate] = useState(new Date());
+    const [showStartPicker, setShowStartPicker] = useState(false);
+    const [showEndPicker, setShowEndPicker] = useState(false);
 
-    // Filter for current period logic (approximate for demo or real?)
-    // Using filteredExpenses to calculate summary
-    const calculateSummary = (exps: typeof expenses, period: string) => {
-        // Simple logic for Demo: Just summing up everything for now or implementing basic date check
-        // Ideally matches period logic in History Screen
-        // For now, let's just sum up the visible filtered expenses for the "Total" to show responsiveness
-        const total = exps.reduce((sum, e) => sum + e.amount, 0);
-        const fuel = exps.filter(e => e.type === 'Fuel').reduce((sum, e) => sum + e.amount, 0);
-        const service = exps.filter(e => e.type === 'Service').reduce((sum, e) => sum + e.amount, 0);
+    // Fetch data when vehicle or period changes
+    // Fetch data when vehicle or period changes
+    useEffect(() => {
+        const getDates = () => {
+            const now = new Date();
+            let start = new Date(now);
+            const endDate = now.toISOString().split('T')[0];
+
+            if (selectedPeriod === 'Week') {
+                // Sunday as start of week
+                const day = now.getDay(); // 0 is Sunday
+                start.setDate(now.getDate() - day);
+            } else if (selectedPeriod === 'Month') {
+                start.setDate(1);
+            } else if (selectedPeriod === 'Year') {
+                start.setMonth(0, 1);
+            } else if (selectedPeriod === 'Custom') {
+                return {
+                    startDate: customStartDate.toISOString().split('T')[0],
+                    endDate: customEndDate.toISOString().split('T')[0]
+                };
+            }
+
+            const startDate = start.toISOString().split('T')[0];
+            setActiveDateRange({ start: startDate, end: endDate });
+
+            return { startDate, endDate };
+        };
+
+        const { startDate, endDate } = getDates();
+        fetchExpenses({
+            vehicleId: selectedVehicleId || undefined,
+            startDate,
+            endDate
+        });
+    }, [selectedVehicleId, selectedPeriod, customStartDate, customEndDate]);
+
+    const formatDateRange = () => {
+        const options: Intl.DateTimeFormatOptions = { day: '2-digit', month: 'short', year: 'numeric' };
+        const start = new Date(activeDateRange.start).toLocaleDateString(undefined, options);
+        const end = new Date(activeDateRange.end).toLocaleDateString(undefined, options);
+        return `${start} - ${end}`;
+    };
+
+    const getIconForCategory = (name: string) => {
+        const n = (name || '').toLowerCase();
+        if (n.includes('service')) return 'build';
+        if (n.includes('repair')) return 'hammer';
+        if (n.includes('insurance')) return 'shield-checkmark';
+        if (n.includes('fuel')) return 'water';
+        if (n.includes('tax')) return 'document-text';
+        return 'wallet';
+    };
+
+    // Summary calculation
+    const summary = useMemo(() => {
+        const total = expenses.reduce((sum, e) => sum + e.amount, 0);
+        const fuel = expenses.filter(e => e.type.toLowerCase() === 'fuel').reduce((sum, e) => sum + e.amount, 0);
+        const service = expenses.filter(e => e.type.toLowerCase().includes('service')).reduce((sum, e) => sum + e.amount, 0);
         const other = total - fuel - service;
 
         return {
@@ -51,14 +105,11 @@ export default function ExpensesScreen() {
             service: `₹${service.toLocaleString()}`,
             other: `₹${other.toLocaleString()}`
         };
-    };
+    }, [expenses]);
 
-    const summary = useMemo(() => calculateSummary(filteredExpenses, selectedPeriod), [filteredExpenses, selectedPeriod, expenses]);
     const recentExpenses = useMemo(() => {
-        return [...filteredExpenses]
-            .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
-            .slice(0, 5);
-    }, [filteredExpenses, expenses]);
+        return [...expenses].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()).slice(0, 5);
+    }, [expenses]);
 
     const selectedVehicle = vehicles.find(v => v.id === selectedVehicleId);
 
@@ -113,18 +164,71 @@ export default function ExpensesScreen() {
                     ))}
                 </View>
 
+                {selectedPeriod === 'Custom' && (
+                    <View style={styles.customDateContainer}>
+                        <TouchableOpacity
+                            style={styles.datePickerBtn}
+                            onPress={() => setShowStartPicker(true)}
+                        >
+                            <Text style={styles.datePickerLabel}>From</Text>
+                            <Text style={styles.datePickerValue}>{customStartDate.toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' })}</Text>
+                        </TouchableOpacity>
+
+                        <Ionicons name="arrow-forward" size={16} color={COLORS.border} />
+
+                        <TouchableOpacity
+                            style={styles.datePickerBtn}
+                            onPress={() => setShowEndPicker(true)}
+                        >
+                            <Text style={styles.datePickerLabel}>To</Text>
+                            <Text style={styles.datePickerValue}>{customEndDate.toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' })}</Text>
+                        </TouchableOpacity>
+
+                        {showStartPicker && (
+                            <DateTimePicker
+                                value={customStartDate}
+                                mode="date"
+                                display="default"
+                                onChange={(event, date) => {
+                                    setShowStartPicker(false);
+                                    if (date) setCustomStartDate(date);
+                                }}
+                            />
+                        )}
+                        {showEndPicker && (
+                            <DateTimePicker
+                                value={customEndDate}
+                                mode="date"
+                                display="default"
+                                onChange={(event, date) => {
+                                    setShowEndPicker(false);
+                                    if (date) setCustomEndDate(date);
+                                }}
+                            />
+                        )}
+                    </View>
+                )}
+
                 {/* Summary Cards */}
                 <View style={styles.summaryContainer}>
+                    <View style={styles.dateDisplayContainer}>
+                        <Ionicons name="calendar-outline" size={14} color={COLORS.textLight} />
+                        <Text style={styles.dateDisplayText}>{formatDateRange()}</Text>
+                    </View>
+
                     {selectedVehicle && (
                         <View style={styles.selectedVehicleCard}>
                             <View style={styles.vehicleInfoRow}>
                                 <View>
-                                    <Text style={styles.vehicleDetailLabel}>Registration</Text>
-                                    <Text style={styles.vehicleDetailValue}>{selectedVehicle.registration}</Text>
+                                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                                        <Ionicons name="car-outline" size={18} color={COLORS.primary} />
+                                        <Text style={styles.vehicleDetailValue}>{selectedVehicle.brand} {selectedVehicle.model}</Text>
+                                    </View>
+                                    <Text style={styles.vehicleDetailLabel}>{selectedVehicle.registration}</Text>
                                 </View>
                                 <View style={{ alignItems: 'flex-end' }}>
-                                    <Text style={styles.vehicleDetailLabel}>Fuel Type</Text>
-                                    <Text style={styles.vehicleDetailValue}>{selectedVehicle.fuelType}</Text>
+                                    <Text style={styles.vehicleDetailLabel}>Odometer</Text>
+                                    <Text style={styles.vehicleDetailValue}>{selectedVehicle.mileage} km</Text>
                                 </View>
                             </View>
                         </View>
@@ -133,7 +237,7 @@ export default function ExpensesScreen() {
                     <View style={styles.summaryMain}>
                         <Text style={styles.summaryLabel}>Total Expenses</Text>
                         <Text style={styles.summaryValue}>{summary.total}</Text>
-                        <Text style={styles.summaryPeriod}>This {selectedPeriod.toLowerCase()}</Text>
+                        <Text style={styles.summaryPeriod}>Spent in this period</Text>
                     </View>
 
                     <View style={styles.summaryRow}>
@@ -166,7 +270,12 @@ export default function ExpensesScreen() {
                         </View>
                         <TouchableOpacity
                             style={styles.viewAllBtn}
-                            onPress={() => navigation.navigate('ExpenseHistory', { vehicleId: selectedVehicleId || undefined })}
+                            onPress={() => navigation.navigate('ExpenseHistory', {
+                                vehicleId: selectedVehicleId || undefined,
+                                startDate: activeDateRange.start,
+                                endDate: activeDateRange.end,
+                                period: selectedPeriod
+                            })}
                         >
                             <Text style={styles.viewAll}>View All</Text>
                             <Ionicons name="arrow-forward" size={14} color={COLORS.primary} />
@@ -183,7 +292,7 @@ export default function ExpensesScreen() {
                             <TouchableOpacity
                                 key={expense.id}
                                 style={styles.expenseCard}
-                                onPress={() => { }}
+                                onPress={() => (navigation as any).navigate('AddExpense', { expense })}
                                 activeOpacity={0.7}
                             >
                                 <View style={[styles.expenseIcon, { backgroundColor: `${expense.color || COLORS.primary}15` }]}>
@@ -315,8 +424,8 @@ const styles = StyleSheet.create({
     periodContainer: {
         flexDirection: 'row',
         paddingHorizontal: SIZES.padding,
-        marginTop: 20,
-        gap: 10,
+        marginTop: 15,
+        gap: 8,
     },
     periodBtn: {
         flex: 1,
@@ -641,5 +750,47 @@ const styles = StyleSheet.create({
         marginTop: 10,
         color: COLORS.textLight,
         fontSize: 14,
+    },
+    dateDisplayContainer: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 6,
+        marginBottom: 15,
+        opacity: 0.7,
+    },
+    dateDisplayText: {
+        fontSize: 12,
+        color: COLORS.text,
+        fontWeight: '600',
+    },
+    customDateContainer: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        paddingHorizontal: SIZES.padding,
+        marginTop: 15,
+        gap: 10,
+    },
+    datePickerBtn: {
+        flex: 1,
+        backgroundColor: COLORS.white,
+        paddingHorizontal: 15,
+        paddingVertical: 10,
+        borderRadius: 12,
+        borderWidth: 1,
+        borderColor: '#E2E8F0',
+        ...SHADOWS.light,
+    },
+    datePickerLabel: {
+        fontSize: 10,
+        color: COLORS.textLight,
+        textTransform: 'uppercase',
+        marginBottom: 2,
+    },
+    datePickerValue: {
+        fontSize: 13,
+        fontWeight: 'bold',
+        color: COLORS.text,
     },
 });

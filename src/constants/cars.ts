@@ -7,6 +7,9 @@ export interface Specs {
     transmission?: string;
     groundClearance?: string;
     bootSpace?: string;
+    length?: string;
+    width?: string;
+    tank?: string;
 }
 
 export interface ColorOption {
@@ -28,7 +31,7 @@ export interface Car {
     type: 'CAR' | 'BIKE';
     specs: Specs;
     colorOptions?: ColorOption[];
-    status?: 'new' | 'upcoming';
+    status?: 'new' | 'upcoming' | 'trending';
 }
 
 export const BROWSE_CARS: Car[] = [

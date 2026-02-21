@@ -35,8 +35,9 @@ apiClient.interceptors.response.use(
         if (config.enableLogging && __DEV__) {
             const start = (response.config as any).metadata?.startTime;
             const duration = start ? Date.now() - start : 'unknown';
+            const fullUrl = axios.getUri(response.config);
             console.log(
-                `✅ API Success: ${response.config.method?.toUpperCase()} ${response.config.url} (${duration}ms)`
+                `✅ API Success: ${response.config.method?.toUpperCase()} ${fullUrl} (${duration}ms)`
             );
         }
         return response;

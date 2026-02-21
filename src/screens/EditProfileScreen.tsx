@@ -10,9 +10,11 @@ import {
     Alert,
     Platform,
     KeyboardAvoidingView,
+    Switch,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
+import apiClient from '../api/apiClient';
 import { StackNavigationProp } from '@react-navigation/stack';
 import { RootStackParamList } from '../navigation/MainNavigator';
 import { COLORS, SIZES, SHADOWS } from '../constants/theme';
@@ -27,11 +29,11 @@ interface EditProfileScreenProps {
 
 export default function EditProfileScreen({ navigation }: EditProfileScreenProps) {
     const insets = useSafeAreaInsets();
-    const { user } = useAuth();
+    const { user, updateUser } = useAuth();
     const [name, setName] = useState(user?.name || '');
     const [bio, setBio] = useState(user?.bio || 'Automotive Enthusiast | Track Day Junkie | Miami, FL');
     const [email, setEmail] = useState(user?.email || '');
-    const [phone, setPhone] = useState(user?.phone || '');
+    const [isPrivate, setIsPrivate] = useState(user?.isPrivate ?? false);
     const [avatarImage, setAvatarImage] = useState<string | null>(null);
     const [isSaving, setIsSaving] = useState(false);
 
@@ -60,13 +62,67 @@ export default function EditProfileScreen({ navigation }: EditProfileScreenProps
             return;
         }
 
+        if (!user?.id) return;
+
         setIsSaving(true);
-        // Simulate save delay
-        setTimeout(() => {
-            setIsSaving(false);
+        try {
+            // 1. Update Profile Text Data
+            const updatePayload = {
+                id: user.id,
+                username: name.trim(),
+                email: email.trim(),
+                password: '', // Kept empty as per API requirement if not changing
+                activeStatus: true,
+                roleId: (user as any).roleId || 0,
+                bio: bio.trim(),
+                isPrivate: isPrivate
+            };
+
+            await apiClient.put(`/users/${user.id}`, updatePayload);
+
+            // 2. Upload Profile Picture if changed
+            let finalProfilePicUrl = user.profilePicUrl;
+            if (avatarImage && !avatarImage.startsWith('http')) {
+                const formData = new FormData();
+                const filename = avatarImage.split('/').pop() || 'profile.jpg';
+                const match = /\.(\w+)$/.exec(filename);
+                const type = match ? `image/${match[1]}` : `image`;
+
+                formData.append('file', {
+                    uri: avatarImage,
+                    name: filename,
+                    type,
+                } as any);
+
+                const uploadResponse = await apiClient.post(`/users/${user.id}/upload-profile-pic`, formData, {
+                    headers: {
+                        'Content-Type': 'multipart/form-data',
+                    },
+                });
+
+                if (uploadResponse.data && uploadResponse.data.profilePicUrl) {
+                    finalProfilePicUrl = uploadResponse.data.profilePicUrl;
+                }
+            }
+
+            // 3. Update Global State
+            await updateUser({
+                name: name.trim(),
+                username: name.trim(),
+                email: email.trim(),
+                bio: bio.trim(),
+                isPrivate: isPrivate,
+                profilePicUrl: finalProfilePicUrl
+            });
+
             Alert.alert('Success', 'Profile updated successfully!');
             navigation.goBack();
-        }, 1000);
+        } catch (error) {
+            console.error('Error updating profile:', error);
+            Alert.alert('Error', 'Failed to update profile. Please try again.');
+        } finally {
+            setIsSaving(false);
+        }
     };
 
     return (
@@ -87,7 +143,7 @@ export default function EditProfileScreen({ navigation }: EditProfileScreenProps
                     >
                         <Image
                             source={{
-                                uri: avatarImage || 'https://images.unsplash.com/photo-1599566150163-29194dcaad36?w=200',
+                                uri: avatarImage || user?.profilePicUrl || 'https://images.unsplash.com/photo-1599566150163-29194dcaad36?w=200',
                             }}
                             style={styles.avatar}
                         />
@@ -125,18 +181,6 @@ export default function EditProfileScreen({ navigation }: EditProfileScreenProps
                         />
                     </View>
 
-                    {/* Phone */}
-                    <View style={styles.fieldGroup}>
-                        <Text style={styles.label}>Phone Number</Text>
-                        <TextInput
-                            style={styles.input}
-                            placeholder="Enter your phone number"
-                            value={phone}
-                            onChangeText={setPhone}
-                            keyboardType="phone-pad"
-                            placeholderTextColor={COLORS.textExtraLight}
-                        />
-                    </View>
 
                     {/* Bio */}
                     <View style={styles.fieldGroup}>
@@ -149,6 +193,20 @@ export default function EditProfileScreen({ navigation }: EditProfileScreenProps
                             placeholderTextColor={COLORS.textExtraLight}
                             multiline
                             numberOfLines={4}
+                        />
+                    </View>
+
+                    {/* Private Account Switch */}
+                    <View style={styles.switchContainer}>
+                        <View style={styles.switchTextContainer}>
+                            <Text style={styles.switchLabel}>Private Account</Text>
+                            <Text style={styles.switchSubLabel}>Only approved followers can see your posts</Text>
+                        </View>
+                        <Switch
+                            trackColor={{ false: 'rgba(0,0,0,0.1)', true: COLORS.primary }}
+                            thumbColor={isPrivate ? COLORS.white : '#f4f3f4'}
+                            onValueChange={setIsPrivate}
+                            value={isPrivate}
                         />
                     </View>
                 </View>
@@ -288,5 +346,33 @@ const styles = StyleSheet.create({
         fontSize: 15,
         fontWeight: '700',
         color: COLORS.white,
+    },
+    switchContainer: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        backgroundColor: COLORS.white,
+        borderWidth: 1.5,
+        borderColor: '#E8EEF7',
+        borderRadius: 12,
+        paddingHorizontal: 16,
+        paddingVertical: 14,
+        marginTop: 10,
+        ...SHADOWS.light,
+    },
+    switchTextContainer: {
+        flex: 1,
+        paddingRight: 15,
+    },
+    switchLabel: {
+        fontSize: 15,
+        fontWeight: '700',
+        color: COLORS.text,
+        marginBottom: 4,
+    },
+    switchSubLabel: {
+        fontSize: 12,
+        color: COLORS.textExtraLight,
+        fontWeight: '500',
     },
 });

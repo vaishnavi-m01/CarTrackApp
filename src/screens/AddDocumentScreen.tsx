@@ -11,6 +11,7 @@ import {
     Keyboard,
     ActivityIndicator,
     KeyboardAvoidingView,
+    ToastAndroid,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -21,8 +22,12 @@ import { COLORS, SIZES, SHADOWS } from '../constants/theme';
 import { useApp, VehicleDocument, DocumentFile } from '../context/AppContext';
 import apiClient from '../api/apiClient';
 
-// type DocType = VehicleDocument['type'];
-// const DOC_TYPES: DocType[] = ['RC', 'Insurance', 'Pollution', 'Service', 'Other'];
+
+
+const ALLOWED_EXTENSIONS = [
+    'jpg', 'jpeg', 'png', 'webp', 'heic', 'heif', 'avif', 'gif', 'bmp', 'svg', 'tiff', 'tif',
+    'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'txt', 'csv'
+];
 
 export default function AddDocumentScreen({ navigation, route }: { navigation: any, route: any }) {
     const { } = useApp();
@@ -47,14 +52,15 @@ export default function AddDocumentScreen({ navigation, route }: { navigation: a
                 const response = await apiClient.get('/document-types');
                 if (response.data) {
                     setDocTypes(response.data);
-                    // Set default to first type if not editing
                     if (!isEdit && response.data.length > 0) {
                         setSelectedTypeId(response.data[0].id);
                     }
                 }
             } catch (error) {
                 console.error('Error fetching document types:', error);
-                Alert.alert('Error', 'Failed to load document types');
+                if (Platform.OS === 'android') {
+                    ToastAndroid.show('Failed to load document types', ToastAndroid.SHORT);
+                }
             }
         };
 
@@ -70,22 +76,51 @@ export default function AddDocumentScreen({ navigation, route }: { navigation: a
             hideSubscription.remove();
         };
     }, []);
-    
+
 
     const formatToYYYYMMDD = (dateString: string) => {
-        const parts = dateString.split("-");
-        return parts[2] + "-" + parts[1] + "-" + parts[0];
+        if (!dateString) return "";
+        const parts = dateString.includes('/') ? dateString.split('/') : dateString.split('-');
+        if (parts.length !== 3) return dateString;
+
+        // If it's already YYYY-MM-DD, return as is or flip it
+        if (parts[0].length === 4) {
+            return `${parts[2]}/${parts[1]}/${parts[0]}`;
+        }
+        // If it's DD/MM/YYYY or DD-MM-YYYY, convert to YYYY-MM-DD
+        return `${parts[2]}-${parts[1]}-${parts[0]}`;
     };
 
 
     useEffect(() => {
         if (docToEdit) {
-            // Mapping existing doc type to ID might be tricky if we don't have the full object
-            // For now assuming we edit title/files/expiry mainly
+            // Selected type ID mapping
             if (docToEdit.documentTypeId) setSelectedTypeId(docToEdit.documentTypeId);
+            else if (docToEdit.documentTypetypeId) setSelectedTypeId(docToEdit.documentTypetypeId);
+
             setTitle(docToEdit.title);
-            setFiles(docToEdit.files || []);
-            setExpiryDate(formatToYYYYMMDD(docToEdit.expiryDate || ""));
+
+            // Map files to ensure uri is present (from fileUrl) and id is preserved
+            const mappedFiles = (docToEdit.files || []).map((f: any) => {
+                const url = f.uri || f.fileUrl;
+                const encodedFilename = url ? url.split('/').pop() : 'document';
+                const filename = decodeURIComponent(encodedFilename || 'document');
+                return {
+                    ...f,
+                    uri: url,
+                    name: f.name || filename,
+                    type: f.type || (url && url.match(/\.(pdf)$/i) ? 'pdf' : 'image')
+                };
+            });
+            setFiles(mappedFiles);
+
+            // Handle date - if it's already DD/MM/YYYY (from our mapping in previous screen), keep it
+            if (docToEdit.expiryDate && docToEdit.expiryDate.includes('/')) {
+                setExpiryDate(docToEdit.expiryDate);
+            } else if (docToEdit.expiryDate) {
+                // If it's YYYY-MM-DD from API directly
+                setExpiryDate(formatToYYYYMMDD(docToEdit.expiryDate));
+            }
         }
     }, [docToEdit]);
 
@@ -99,7 +134,19 @@ export default function AddDocumentScreen({ navigation, route }: { navigation: a
         });
 
         if (!result.canceled) {
-            const newFiles: DocumentFile[] = result.assets.map(asset => ({
+            const validAssets = result.assets.filter(asset => {
+                const fileName = asset.fileName || 'image.jpg';
+                const ext = fileName.toLowerCase().split('.').pop();
+                if (ext && ALLOWED_EXTENSIONS.includes(ext)) {
+                    return true;
+                }
+                if (Platform.OS === 'android') {
+                    ToastAndroid.show(`File "${fileName}" not supported`, ToastAndroid.SHORT);
+                }
+                return false;
+            });
+
+            const newFiles: DocumentFile[] = validAssets.map(asset => ({
                 uri: asset.uri,
                 name: asset.fileName || `image_${Date.now()}.jpg`,
                 type: 'image'
@@ -117,7 +164,18 @@ export default function AddDocumentScreen({ navigation, route }: { navigation: a
             });
 
             if (!result.canceled) {
-                const newFiles: DocumentFile[] = result.assets.map(asset => {
+                const validAssets = result.assets.filter(asset => {
+                    const ext = asset.name.toLowerCase().split('.').pop();
+                    if (ext && ALLOWED_EXTENSIONS.includes(ext)) {
+                        return true;
+                    }
+                    if (Platform.OS === 'android') {
+                        ToastAndroid.show(`File "${asset.name}" not supported`, ToastAndroid.SHORT);
+                    }
+                    return false;
+                });
+
+                const newFiles: DocumentFile[] = validAssets.map(asset => {
                     const isPdf = asset.mimeType === 'application/pdf' || asset.name.toLowerCase().endsWith('.pdf');
                     return {
                         uri: asset.uri,
@@ -132,20 +190,63 @@ export default function AddDocumentScreen({ navigation, route }: { navigation: a
         }
     };
 
-    const removeFile = (index: number) => {
-        setFiles(prev => prev.filter((_, i) => i !== index));
+    const removeFile = async (index: number) => {
+        const fileToRemove = files[index];
+
+        // If file already exists on server (has numeric id), delete it via API
+        const numericId = (fileToRemove as any).id;
+
+        if (numericId) {
+            // Keep Alert for deletion confirmation as it's a destructive action that needs user confirmation
+            // This is standard UX.
+            Alert.alert(
+                'Delete File',
+                'This file is already saved on the server. Are you sure you want to delete it permanently?',
+                [
+                    { text: 'Cancel', style: 'cancel' },
+                    {
+                        text: 'Delete',
+                        style: 'destructive',
+                        onPress: async () => {
+                            try {
+                                const fileId = (fileToRemove as any).id;
+                                if (Platform.OS === 'android') {
+                                    ToastAndroid.show('Deleting file...', ToastAndroid.SHORT);
+                                }
+                                await apiClient.delete(`/document-files/${fileId}`);
+                                setFiles(prev => prev.filter((_, i) => i !== index));
+                                if (Platform.OS === 'android') {
+                                    ToastAndroid.show(`File deleted successfully`, ToastAndroid.SHORT);
+                                }
+                            } catch (err) {
+                                console.error('Error deleting file:', err);
+                                if (Platform.OS === 'android') {
+                                    ToastAndroid.show('Failed to delete file', ToastAndroid.SHORT);
+                                }
+                            }
+                        }
+                    }
+                ]
+            );
+        } else {
+            // Local-only file, just remove from state
+            setFiles(prev => prev.filter((_, i) => i !== index));
+        }
     };
 
     const handleSave = async () => {
         if (!title || files.length === 0 || !selectedTypeId) {
-            Alert.alert('Required Fields', 'Please provide a type, title and at least one document file/photo');
+            if (Platform.OS === 'android') {
+                ToastAndroid.show('Type, title and file are required', ToastAndroid.SHORT);
+            }
             return;
         }
 
         setIsSaving(true);
+        let docPayload: any = {};
         try {
             // 1. Save Document Metadata
-            const docPayload = {
+            docPayload = {
                 id: isEdit ? docToEdit.id : 0,
                 vehicleId: parseInt(vehicleId),
                 documentTypetypeId: selectedTypeId,
@@ -178,7 +279,7 @@ export default function AddDocumentScreen({ navigation, route }: { navigation: a
                     const filePayload = {
                         id: 0,
                         documentId: documentId,
-                        fileUrl: "" // Backend handles the file path
+                        fileUrl: ""
                     };
 
                     formData.append('data', JSON.stringify(filePayload));
@@ -200,13 +301,19 @@ export default function AddDocumentScreen({ navigation, route }: { navigation: a
 
                 await Promise.all(uploadPromises);
 
-                Alert.alert('Success', `Document ${isEdit ? 'updated' : 'saved'} successfully!`, [
-                    { text: 'OK', onPress: () => navigation.goBack() }
-                ]);
+                const successMsg = `Document ${isEdit ? 'updated' : 'saved'} successfully!`;
+
+                if (Platform.OS === 'android') {
+                    ToastAndroid.show(successMsg, ToastAndroid.LONG);
+                }
+                navigation.goBack();
             }
-        } catch (error) {
+        } catch (error: any) {
             console.error('Error saving document:', error);
-            Alert.alert('Error', 'Failed to save document. Please try again.');
+            const errorMsg = error.response?.data?.message || 'Failed to save document';
+            if (Platform.OS === 'android') {
+                ToastAndroid.show(errorMsg, ToastAndroid.SHORT);
+            }
         } finally {
             setIsSaving(false);
         }

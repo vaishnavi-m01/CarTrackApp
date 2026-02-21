@@ -1,94 +1,96 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
     View,
     Text,
     ScrollView,
     TouchableOpacity,
     StyleSheet,
-    Alert,
+    ActivityIndicator,
+    RefreshControl,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
-import { LinearGradient } from 'expo-linear-gradient';
 import { COLORS, SIZES, SHADOWS } from '../constants/theme';
 import NewsCard from '../components/NewsCard';
 import { useApp } from '../context/AppContext';
 import { StackNavigationProp } from '@react-navigation/stack';
 import { RootStackParamList } from '../navigation/MainNavigator';
-
-interface NewsItem {
-    id: number;
-    type: string;
-    badgeText: string;
-    title: string;
-    source: string;
-    time: string;
-    description: string;
-}
+import apiClient from '../api/apiClient';
+import { NewsHighlight, NewsCategory } from '../types/Community';
 
 export default function NewsScreen() {
     const navigation = useNavigation<StackNavigationProp<RootStackParamList>>();
     const { savedNewsIds, toggleSavedNews } = useApp();
-    const [selectedCategory, setSelectedCategory] = useState('All');
+    const [selectedCategoryName, setSelectedCategoryName] = useState('All');
+    const [newsHighlights, setNewsHighlights] = useState<NewsHighlight[]>([]);
+    const [categories, setCategories] = useState<NewsCategory[]>([]);
+    const [isLoading, setIsLoading] = useState(true);
+    const [isRefreshing, setIsRefreshing] = useState(false);
 
-    const categories = ['All', 'Trending', 'Launches', 'Reviews', 'Tech'];
+    // Initial load: Fetch categories only
+    useEffect(() => {
+        fetchCategories();
+    }, []);
 
-    const newsData: NewsItem[] = [
-        {
-            id: 1,
-            type: 'trending',
-            badgeText: '🔥 TRENDING',
-            title: 'Tesla Launches New Model Y with Advanced Autopilot Features',
-            source: 'AutoNews India',
-            time: '2 hours ago',
-            description: 'Tesla has unveiled its latest Model Y variant featuring enhanced autopilot capabilities and improved range.',
-        },
-        {
-            id: 2,
-            type: 'launch',
-            badgeText: '⚡ NEW LAUNCH',
-            title: 'Tata Motors Unveils Electric SUV Harrier EV at ₹32 Lakh',
-            source: 'CarDekho',
-            time: '5 hours ago',
-            description: 'Tata Motors expands its EV portfolio with the new Harrier EV, featuring a 500km range.',
-        },
-        {
-            id: 3,
-            type: 'price',
-            badgeText: '💰 PRICE DROP',
-            title: 'Hyundai Creta Gets ₹1.5 Lakh Discount This Month',
-            source: 'Team-BHP',
-            time: '1 day ago',
-            description: 'Limited time offer on Hyundai Creta with attractive finance schemes and exchange bonuses.',
-        },
-        {
-            id: 4,
-            type: 'trending',
-            badgeText: '🔥 TRENDING',
-            title: 'BMW Unveils All-New M3 Competition with 503 HP',
-            source: 'Auto Express',
-            time: '1 day ago',
-            description: 'The new M3 Competition brings unprecedented performance and luxury to the sports sedan segment.',
-        },
-        {
-            id: 5,
-            type: 'launch',
-            badgeText: '⚡ NEW LAUNCH',
-            title: 'Mahindra Scorpio N Variants Launched Starting at ₹12 Lakh',
-            source: 'AutoCar India',
-            time: '2 days ago',
-            description: 'Mahindra launches the all-new Scorpio N with multiple powertrain options and advanced features.',
-        },
-        {
-            id: 6,
-            type: 'price',
-            badgeText: '💰 PRICE DROP',
-            title: 'Maruti Suzuki Announces Year-End Discounts Up to ₹80,000',
-            source: 'CarWale',
-            time: '3 days ago',
-            description: 'Attractive discounts across multiple Maruti Suzuki models including Brezza, Ertiga, and Swift.',
-        },
-    ];
+    // Fetch news whenever the selected category changes
+    useEffect(() => {
+        fetchNews(selectedCategoryName);
+    }, [selectedCategoryName, categories]); // categories dependency ensures we have IDs
+
+    const fetchCategories = async () => {
+        try {
+            const response = await apiClient.get('/news-categories');
+            const catData: NewsCategory[] = response.data || [];
+            setCategories(catData);
+        } catch (error) {
+            console.error('Error fetching categories:', error);
+        }
+    };
+
+    const fetchNews = async (categoryName: string) => {
+        setIsLoading(true);
+        try {
+            let endpoint = '/news-highlights';
+
+            if (categoryName === 'Trending') {
+                endpoint = '/news-highlights/trending';
+            } else if (categoryName !== 'All') {
+                const selectedCat = categories.find(c => c.name === categoryName);
+                if (selectedCat) {
+                    endpoint = `/news-highlights/category/${selectedCat.id}`;
+                } else if (categories.length > 0) {
+                    // Category not found yet, wait for categories to load
+                    setIsLoading(false);
+                    return;
+                }
+            }
+
+            const response = await apiClient.get(endpoint);
+            setNewsHighlights(response.data || []);
+        } catch (error) {
+            console.error('Error fetching news:', error);
+            setNewsHighlights([]);
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
+    const onRefresh = async () => {
+        setIsRefreshing(true);
+        await Promise.all([
+            fetchCategories(),
+            fetchNews(selectedCategoryName)
+        ]);
+        setIsRefreshing(false);
+    };
+
+    if (isLoading) {
+        return (
+            <View style={[styles.container, styles.centerContent]}>
+                <ActivityIndicator size="large" color={COLORS.primary} />
+            </View>
+        );
+    }
 
     return (
         <View style={styles.container}>
@@ -100,19 +102,19 @@ export default function NewsScreen() {
                     style={styles.categories}
                     contentContainerStyle={styles.categoriesContent}
                 >
-                    {categories.map((category) => (
+                    {['All', 'Trending', ...categories.map(c => c.name)].map((category) => (
                         <TouchableOpacity
                             key={category}
                             style={[
                                 styles.categoryBtn,
-                                selectedCategory === category && styles.categoryBtnActive,
+                                selectedCategoryName === category && styles.categoryBtnActive,
                             ]}
-                            onPress={() => setSelectedCategory(category)}
+                            onPress={() => setSelectedCategoryName(category)}
                         >
                             <Text
                                 style={[
                                     styles.categoryText,
-                                    selectedCategory === category && styles.categoryTextActive,
+                                    selectedCategoryName === category && styles.categoryTextActive,
                                 ]}
                             >
                                 {category}
@@ -126,18 +128,28 @@ export default function NewsScreen() {
             <ScrollView
                 showsVerticalScrollIndicator={false}
                 contentContainerStyle={styles.newsList}
+                refreshControl={
+                    <RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} />
+                }
             >
-                {newsData.map((news) => (
-                    <NewsCard
-                        key={news.id}
-                        news={news}
-                        isSaved={savedNewsIds.includes(news.id)}
-                        onSave={() => toggleSavedNews(news.id)}
-                        onPress={() =>
-                            navigation.navigate('NewsDetail', { news })
-                        }
-                    />
-                ))}
+                {newsHighlights.length > 0 ? (
+                    newsHighlights.map((news) => (
+                        <NewsCard
+                            key={news.id}
+                            news={news}
+                            isSaved={savedNewsIds.includes(news.id)}
+                            onSave={() => toggleSavedNews(news.id)}
+                            onPress={() =>
+                                navigation.navigate('NewsDetail', { news })
+                            }
+                        />
+                    ))
+                ) : (
+                    <View style={styles.emptyContainer}>
+                        <Ionicons name="newspaper-outline" size={60} color={COLORS.gray} />
+                        <Text style={styles.emptyText}>No news highlights available for this category</Text>
+                    </View>
+                )}
             </ScrollView>
         </View>
     );
@@ -186,5 +198,22 @@ const styles = StyleSheet.create({
     newsList: {
         padding: SIZES.padding,
         paddingBottom: 100,
+    },
+    centerContent: {
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    emptyContainer: {
+        flex: 1,
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingTop: 100,
+        gap: 15,
+    },
+    emptyText: {
+        color: COLORS.textLight,
+        fontSize: 16,
+        textAlign: 'center',
+        paddingHorizontal: 40,
     },
 });

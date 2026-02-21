@@ -10,19 +10,25 @@ import {
     Platform,
     Linking,
     Modal,
+    ActivityIndicator,
+    TextInput,
+    Dimensions,
+    FlatList,
     Share,
     SafeAreaView,
 } from 'react-native';
+
+const { width: SCREEN_WIDTH } = Dimensions.get('window');
 import * as ExpoLinking from 'expo-linking';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons, MaterialIcons } from '@expo/vector-icons';
 import * as Sharing from 'expo-sharing';
 import * as IntentLauncher from 'expo-intent-launcher';
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { COLORS, SIZES, SHADOWS } from '../constants/theme';
-import { useApp, DocumentFile } from '../context/AppContext';
+import { useApp, DocumentFile, VehicleDocument } from '../context/AppContext';
 
 interface QuickAction {
     icon: keyof typeof Ionicons.glyphMap;
@@ -57,35 +63,60 @@ export default function VehicleDetailsScreen({ navigation, route }: { navigation
 
     const [isOptionsVisible, setOptionsVisible] = useState(false);
     const [imageViewerVisible, setImageViewerVisible] = useState(false);
-    const [currentImageUri, setCurrentImageUri] = useState<string | null>(null);
+    const [initialImageIndex, setInitialImageIndex] = useState(0);
+    const [galleryImages, setGalleryImages] = useState<DocumentFile[]>([]);
+    const [currentGalleryIndex, setCurrentGalleryIndex] = useState(0);
+    const [selectedDoc, setSelectedDoc] = useState<VehicleDocument | null>(null);
 
     const handleViewFile = async (file: DocumentFile) => {
         try {
-            // 1. Handle Images Internally
-            if (file.type === 'image' || file.name.match(/\.(jpg|jpeg|png|webp)$/i)) {
-                setCurrentImageUri(file.uri);
-                setImageViewerVisible(true);
+            const fileName = file.name || 'document';
+            // Sanitize filename for local storage to avoid "File does not exist" errors
+            const safeFileName = fileName.replace(/[^a-zA-Z0-9.]/g, '_');
+            const isImage = file.type === 'image' || fileName.match(/\.(jpg|jpeg|png|webp)$/i);
+
+            // 1. Handle Images Internally (for full screen viewing)
+            if (isImage) {
+                // If we have selectedDoc (populated by some logic in this screen)
+                if (selectedDoc) {
+                    const allImages = (selectedDoc.files || []).filter(f =>
+                        f.type === 'image' || (f.name || '').match(/\.(jpg|jpeg|png|webp)$/i)
+                    );
+                    const imageIndex = allImages.findIndex(f => f.uri === file.uri);
+
+                    setGalleryImages(allImages);
+                    setInitialImageIndex(imageIndex >= 0 ? imageIndex : 0);
+                    setCurrentGalleryIndex(imageIndex >= 0 ? imageIndex : 0);
+                    setImageViewerVisible(true);
+                } else {
+                    setGalleryImages([file]);
+                    setInitialImageIndex(0);
+                    setCurrentGalleryIndex(0);
+                    setImageViewerVisible(true);
+                }
                 return;
             }
 
             // 2. Handle Documents (PDF etc)
-            let mimeType = 'application/octet-stream';
-            if (file.type === 'pdf' || file.name.toLowerCase().endsWith('.pdf')) mimeType = 'application/pdf';
+            let mimeType = fileName.toLowerCase().endsWith('.pdf') ? 'application/pdf' : 'application/octet-stream';
 
             if (Platform.OS === 'android') {
-                // Android: robust content URI generation
                 let contentUri = file.uri;
+                // Robust cache directory access to handle different expo-file-system versions
+                const cacheDir = (FileSystem as any).cacheDirectory || (FileSystem as any).default?.cacheDirectory;
 
-                // If it's already content://, use it. If file://, convert it.
-                if (contentUri.startsWith('file://')) {
+                // For remote URLs or local file:// URIs, ensure we have a content URI Android can handle
+                if (contentUri.startsWith('http')) {
+                    // Remote URL: Download to cache first
+                    const downloadPath = cacheDir + safeFileName;
+                    const downloadResult = await FileSystem.downloadAsync(file.uri, downloadPath);
+                    contentUri = await FileSystem.getContentUriAsync(downloadResult.uri);
+                } else if (contentUri.startsWith('file://')) {
                     try {
                         contentUri = await FileSystem.getContentUriAsync(file.uri);
                     } catch (e) {
                         console.log('Error getting content URI directly, trying copy:', e);
-                        // Fallback: Copy to cache to ensure it's accessible and then get URI
-                        // @ts-ignore: Accessing native module properties
-                        const cacheDir = (FileSystem as any).default?.cacheDirectory || (FileSystem as any).default?.documentDirectory;
-                        const dest = cacheDir + file.name;
+                        const dest = cacheDir + safeFileName;
                         await FileSystem.copyAsync({ from: file.uri, to: dest });
                         contentUri = await FileSystem.getContentUriAsync(dest);
                     }
@@ -105,21 +136,16 @@ export default function VehicleDetailsScreen({ navigation, route }: { navigation
                     // Fallback to sharing 
                     await Sharing.shareAsync(file.uri, {
                         mimeType,
-                        UTI: file.type === 'pdf' ? 'com.adobe.pdf' : undefined
+                        UTI: fileName.toLowerCase().endsWith('.pdf') ? 'com.adobe.pdf' : undefined
                     });
                 }
             }
         } catch (err) {
             console.error('Direct view failed, trying share fallback:', err);
-            // Only fallback to share if it's NOT an image (images rely on our internal viewer)
-            if (file.type !== 'image') {
-                try {
-                    await Sharing.shareAsync(file.uri);
-                } catch (shareErr) {
-                    Alert.alert('Error', 'Could not open file.');
-                }
-            } else {
-                Alert.alert('Error', 'Could not open image.');
+            try {
+                await Sharing.shareAsync(file.uri);
+            } catch (shareErr) {
+                Alert.alert('Error', 'Could not open file.');
             }
         }
     };
@@ -277,13 +303,13 @@ export default function VehicleDetailsScreen({ navigation, route }: { navigation
                     <Ionicons name="chevron-back" size={24} color={COLORS.text} />
                 </TouchableOpacity>
 
-              <TouchableOpacity
-    style={styles.headerBtnCircle}
-    onPress={() => navigation.navigate('AddVehicle', { vehicle })}
-    activeOpacity={0.7}
->
-    <MaterialIcons name="edit" size={24} color={COLORS.text} />
-</TouchableOpacity>
+                <TouchableOpacity
+                    style={styles.headerBtnCircle}
+                    onPress={() => navigation.navigate('AddVehicle', { vehicle })}
+                    activeOpacity={0.7}
+                >
+                    <MaterialIcons name="edit" size={24} color={COLORS.text} />
+                </TouchableOpacity>
 
 
             </View>
@@ -564,22 +590,44 @@ export default function VehicleDetailsScreen({ navigation, route }: { navigation
                 onRequestClose={() => setImageViewerVisible(false)}
                 animationType="fade"
             >
-                <View style={{ flex: 1, backgroundColor: 'black', justifyContent: 'center', alignItems: 'center' }}>
-                    <SafeAreaView style={{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 10 }}>
-                        <TouchableOpacity
-                            onPress={() => setImageViewerVisible(false)}
-                            style={{ padding: 20, alignSelf: 'flex-end', marginTop: insets.top }}
-                        >
-                            <Ionicons name="close-circle" size={36} color="white" />
-                        </TouchableOpacity>
-                    </SafeAreaView>
+                <View style={{ flex: 1, backgroundColor: 'black' }}>
+                    <SafeAreaView style={{ flex: 1 }}>
+                        <View style={styles.galleryHeader}>
+                            <Text style={styles.galleryCounter}>
+                                {currentGalleryIndex + 1} / {galleryImages.length}
+                            </Text>
+                            <TouchableOpacity
+                                onPress={() => setImageViewerVisible(false)}
+                                style={styles.galleryCloseBtn}
+                            >
+                                <Ionicons name="close-circle" size={36} color="white" />
+                            </TouchableOpacity>
+                        </View>
 
-                    {currentImageUri && (
-                        <Image
-                            source={{ uri: currentImageUri }}
-                            style={{ width: '100%', height: '100%', resizeMode: 'contain' }}
+                        <FlatList
+                            data={galleryImages}
+                            horizontal
+                            pagingEnabled
+                            initialScrollIndex={initialImageIndex}
+                            getItemLayout={(data, index) => (
+                                { length: SCREEN_WIDTH, offset: SCREEN_WIDTH * index, index }
+                            )}
+                            onMomentumScrollEnd={(e) => {
+                                const index = Math.round(e.nativeEvent.contentOffset.x / SCREEN_WIDTH);
+                                setCurrentGalleryIndex(index);
+                            }}
+                            keyExtractor={(item, index) => index.toString()}
+                            renderItem={({ item }) => (
+                                <View style={{ width: SCREEN_WIDTH, height: '100%', justifyContent: 'center', alignItems: 'center' }}>
+                                    <Image
+                                        source={{ uri: item.uri }}
+                                        style={{ width: '100%', height: '80%', resizeMode: 'contain' }}
+                                    />
+                                </View>
+                            )}
+                            showsHorizontalScrollIndicator={false}
                         />
-                    )}
+                    </SafeAreaView>
                 </View>
             </Modal>
         </View>
@@ -1035,8 +1083,24 @@ const styles = StyleSheet.create({
         borderRadius: 15,
     },
     cancelText: {
-        fontSize: 15,
+        fontSize: 16,
         fontWeight: 'bold',
-        color: COLORS.textLight,
+        color: '#64748b',
+    },
+    galleryHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        paddingHorizontal: 20,
+        paddingVertical: 10,
+        zIndex: 20,
+    },
+    galleryCounter: {
+        color: 'white',
+        fontSize: 16,
+        fontWeight: 'bold',
+    },
+    galleryCloseBtn: {
+        padding: 5,
     },
 });

@@ -3,17 +3,10 @@ import { View, Text, TouchableOpacity, StyleSheet, GestureResponderEvent } from 
 import { Ionicons } from '@expo/vector-icons';
 import { COLORS, SIZES, SHADOWS } from '../constants/theme';
 
-interface NewsItem {
-    type: 'trending' | 'launch' | 'price' | string;
-    badgeText: string;
-    title: string;
-    source: string;
-    time: string;
-    id: number;
-}
+import { NewsHighlight } from '../types/Community';
 
 interface NewsCardProps {
-    news: NewsItem;
+    news: NewsHighlight;
     onPress?: (event: GestureResponderEvent) => void;
     onSave?: (event: GestureResponderEvent) => void;
     isSaved?: boolean;
@@ -26,11 +19,14 @@ export default function NewsCard({ news, onPress, onSave, isSaved }: NewsCardPro
         price: COLORS.success,
     };
 
+    // Determine type for badge coloring
+    const type = news.isTrending ? 'trending' : 'default';
+
     return (
         <TouchableOpacity style={styles.card} onPress={onPress} activeOpacity={0.7}>
             <View style={styles.cardHeader}>
-                <View style={[styles.badge, { backgroundColor: badgeColors[news.type] || COLORS.gray }]}>
-                    <Text style={styles.badgeText}>{news.badgeText}</Text>
+                <View style={[styles.badge, { backgroundColor: badgeColors[type] || COLORS.primary }]}>
+                    <Text style={styles.badgeText}>{news.badgeText || (news.isTrending ? '🔥 TRENDING' : 'NEWS')}</Text>
                 </View>
                 {onSave && (
                     <TouchableOpacity
@@ -52,9 +48,8 @@ export default function NewsCard({ news, onPress, onSave, isSaved }: NewsCardPro
             <View style={styles.meta}>
                 <View style={styles.source}>
                     <Text style={styles.sourceIcon}>📰</Text>
-                    <Text style={styles.sourceText}>{news.source}</Text>
+                    <Text style={styles.sourceText}>{news.source || 'AutoNews'}</Text>
                 </View>
-                <Text style={styles.time}>{news.time}</Text>
             </View>
         </TouchableOpacity>
     );
