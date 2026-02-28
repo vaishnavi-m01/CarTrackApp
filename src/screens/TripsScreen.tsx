@@ -8,6 +8,7 @@ import {
     Platform,
     ActivityIndicator,
     Alert,
+    Animated,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
@@ -24,6 +25,12 @@ export default function TripsScreen({ navigation, route }: { navigation: any, ro
 
     const [trips, setTrips] = useState<any[]>([]);
     const [isLoading, setIsLoading] = useState(true);
+
+    const scrollY = React.useRef(new Animated.Value(0)).current;
+
+    React.useEffect(() => {
+        navigation.setParams({ scrollY });
+    }, []);
 
     const fetchTrips = useCallback(async () => {
         if (!vehicleId) return;
@@ -81,7 +88,15 @@ export default function TripsScreen({ navigation, route }: { navigation: any, ro
 
     return (
         <View style={styles.container}>
-            <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+            <Animated.ScrollView
+                contentContainerStyle={styles.content}
+                showsVerticalScrollIndicator={false}
+                onScroll={Animated.event(
+                    [{ nativeEvent: { contentOffset: { y: scrollY } } }],
+                    { useNativeDriver: false }
+                )}
+                scrollEventThrottle={16}
+            >
 
                 {/* Start New Trip Button */}
                 <TouchableOpacity
@@ -189,7 +204,7 @@ export default function TripsScreen({ navigation, route }: { navigation: any, ro
                         })}
                     </View>
                 )}
-            </ScrollView>
+            </Animated.ScrollView>
         </View>
     );
 }

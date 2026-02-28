@@ -1,4 +1,4 @@
-import React, { useState, useLayoutEffect } from 'react';
+import React, { useState, useLayoutEffect, useEffect } from 'react';
 import {
     View,
     Text,
@@ -16,8 +16,9 @@ import {
     Switch,
     PanResponder,
     Animated,
+    Keyboard,
 } from 'react-native';
-import { Video as ExpoVideo, ResizeMode } from 'expo-av';
+import { useVideoPlayer, VideoView } from 'expo-video';
 let Compressor: any = null;
 try {
     Compressor = require('react-native-compressor').Video;
@@ -44,6 +45,12 @@ interface CreatePostScreenProps {
 
 export default function CreatePostScreen({ navigation }: CreatePostScreenProps) {
     const { user } = useAuth();
+
+    const scrollY = React.useRef(new Animated.Value(0)).current;
+
+    React.useEffect(() => {
+        navigation.setParams({ scrollY } as any);
+    }, []);
     const [content, setContent] = useState('');
     const [mediaItems, setMediaItems] = useState<MediaItem[]>([]);
     const [isPosting, setIsPosting] = useState(false);
@@ -57,6 +64,36 @@ export default function CreatePostScreen({ navigation }: CreatePostScreenProps) 
     const [tags, setTags] = useState<string[]>([]);
     const [showTagModal, setShowTagModal] = useState(false);
     const [tagInput, setTagInput] = useState('');
+    const [keyboardHeight, setKeyboardHeight] = useState(new Animated.Value(0));
+
+    // Listen to keyboard events to adjust modal padding manually on Android
+    useEffect(() => {
+        const keyboardWillShowListener = Keyboard.addListener(
+            Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow',
+            (e) => {
+                Animated.timing(keyboardHeight, {
+                    toValue: e.endCoordinates.height,
+                    duration: 250,
+                    useNativeDriver: false,
+                }).start();
+            }
+        );
+        const keyboardWillHideListener = Keyboard.addListener(
+            Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide',
+            () => {
+                Animated.timing(keyboardHeight, {
+                    toValue: 0,
+                    duration: 250,
+                    useNativeDriver: false,
+                }).start();
+            }
+        );
+
+        return () => {
+            keyboardWillShowListener.remove();
+            keyboardWillHideListener.remove();
+        };
+    }, []);
     const [locationSuggestions, setLocationSuggestions] = useState<string[]>([]);
     const { vehicles } = useApp();
     const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
@@ -286,7 +323,7 @@ export default function CreatePostScreen({ navigation }: CreatePostScreenProps) 
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     };
 
-    const videoRef = React.useRef<ExpoVideo>(null);
+    // videoRef is now handled by the players directly
 
     const trimStartRef = React.useRef(trimStart);
     const trimEndRef = React.useRef(trimEnd);
@@ -308,7 +345,7 @@ export default function CreatePostScreen({ navigation }: CreatePostScreenProps) 
                 const dur = videoDurationRef.current;
                 const newPos = Math.max(0, Math.min(trimEndRef.current - 1000, ((gestureState.moveX - 20) / cw) * dur));
                 setTrimStart(newPos);
-                videoRef.current?.setPositionAsync(newPos);
+                // Trimming positioning will be handled via the Player inside the Refinement modal
             },
         })
     ).current;
@@ -322,7 +359,7 @@ export default function CreatePostScreen({ navigation }: CreatePostScreenProps) 
                 const dur = videoDurationRef.current;
                 const newPos = Math.max(trimStartRef.current + 1000, Math.min(dur, ((gestureState.moveX - 20) / cw) * dur));
                 setTrimEnd(newPos);
-                videoRef.current?.setPositionAsync(newPos);
+                // Trimming positioning will be handled via the Player inside the Refinement modal
             },
         })
     ).current;
@@ -616,10 +653,18 @@ export default function CreatePostScreen({ navigation }: CreatePostScreenProps) 
             <KeyboardAvoidingView
                 style={{ flex: 1 }}
                 behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-                keyboardVerticalOffset={Platform.OS === 'ios' ? 80 : 0}
+                keyboardVerticalOffset={Platform.OS === 'ios' ? 80 : 80}
             >
                 <View style={styles.container}>
-                    <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
+                    <Animated.ScrollView
+                        style={styles.content}
+                        showsVerticalScrollIndicator={false}
+                        onScroll={Animated.event(
+                            [{ nativeEvent: { contentOffset: { y: scrollY } } }],
+                            { useNativeDriver: false }
+                        )}
+                        scrollEventThrottle={16}
+                    >
                         {/* Media Section */}
                         {renderMediaUploader()}
 
@@ -784,7 +829,7 @@ export default function CreatePostScreen({ navigation }: CreatePostScreenProps) 
                         </TouchableOpacity>
 
                         <View style={{ height: 40 }} />
-                    </ScrollView>
+                    </Animated.ScrollView>
                 </View>
             </KeyboardAvoidingView>
 
@@ -796,8 +841,8 @@ export default function CreatePostScreen({ navigation }: CreatePostScreenProps) 
                 animationType="slide"
                 onRequestClose={() => setShowLocationModal(false)}
             >
-                <View style={styles.modalOverlay}>
-                    <View style={styles.modalContainer}>
+                <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={() => Keyboard.dismiss()}>
+                    <Animated.View style={[styles.modalContainer, { marginBottom: keyboardHeight }]}>
                         <View style={styles.modalHeader}>
                             <Text style={styles.modalTitle}>Add Location</Text>
                             <TouchableOpacity onPress={() => setShowLocationModal(false)}>
@@ -828,8 +873,8 @@ export default function CreatePostScreen({ navigation }: CreatePostScreenProps) 
                         >
                             <Text style={styles.modalButtonText}>Add Location</Text>
                         </TouchableOpacity>
-                    </View>
-                </View>
+                    </Animated.View>
+                </TouchableOpacity>
             </Modal>
 
             {/* Tag Modal (General Tags) */}
@@ -839,8 +884,8 @@ export default function CreatePostScreen({ navigation }: CreatePostScreenProps) 
                 animationType="slide"
                 onRequestClose={() => setShowTagModal(false)}
             >
-                <View style={styles.modalOverlay}>
-                    <View style={styles.modalContainer}>
+                <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={() => Keyboard.dismiss()}>
+                    <Animated.View style={[styles.modalContainer, { marginBottom: keyboardHeight }]}>
                         <View style={styles.modalHeader}>
                             <Text style={styles.modalTitle}>Add Tag</Text>
                             <TouchableOpacity onPress={() => setShowTagModal(false)}>
@@ -868,8 +913,8 @@ export default function CreatePostScreen({ navigation }: CreatePostScreenProps) 
                         >
                             <Text style={styles.modalButtonText}>Add Tag</Text>
                         </TouchableOpacity>
-                    </View>
-                </View>
+                    </Animated.View>
+                </TouchableOpacity>
             </Modal>
 
             {/* Feeling Modal */}
@@ -940,65 +985,62 @@ export default function CreatePostScreen({ navigation }: CreatePostScreenProps) 
                             </View>
                         </View>
 
-                        {renderVideoTrimmer()}
+                        <View style={{ flex: 1, justifyContent: 'center', width: '100%', marginBottom: 60 }}>
+                            {renderVideoTrimmer()}
 
-                        <View style={styles.previewWrapper}>
-                            <TouchableOpacity
-                                activeOpacity={0.9}
-                                onPress={toggleRatio}
-                                style={[
-                                    styles.ratioPreview,
-                                    {
-                                        aspectRatio: selectedRatio || 1, // Fallback to square if NaN
-                                        width: SCREEN_WIDTH,
-                                        backgroundColor: '#000'
-                                    }
-                                ]}
-                            >
+                            <View style={styles.previewWrapper}>
                                 {refiningMedia?.type === 'video' ? (
-                                    <ExpoVideo
-                                        ref={videoRef}
-                                        source={{ uri: refiningMedia.uri }}
-                                        style={styles.fullImage}
-                                        resizeMode={ResizeMode.COVER}
-                                        shouldPlay
-                                        isLooping
-                                        isMuted
-                                        onPlaybackStatusUpdate={(status: any) => {
-                                            if (status.isPlaying && status.positionMillis >= trimEnd) {
-                                                videoRef.current?.setPositionAsync(trimStart);
-                                            }
-                                        }}
+                                    <RefiningVideoPlayer
+                                        uri={refiningMedia.uri}
+                                        selectedRatio={selectedRatio}
+                                        trimStart={trimStart}
+                                        trimEnd={trimEnd}
                                     />
                                 ) : (
-                                    <Image
-                                        source={{ uri: refiningMedia?.uri }}
-                                        style={styles.fullImage}
-                                        resizeMode="cover"
-                                    />
+                                    <View
+                                        style={[
+                                            styles.ratioPreview,
+                                            {
+                                                aspectRatio: selectedRatio || 1,
+                                                width: SCREEN_WIDTH,
+                                                backgroundColor: '#000'
+                                            }
+                                        ]}
+                                    >
+                                        <Image
+                                            source={{ uri: refiningMedia?.uri }}
+                                            style={styles.fullImage}
+                                            resizeMode="cover"
+                                        />
+                                        <View style={styles.gridContainer} pointerEvents="none">
+                                            <View style={styles.gridLineV} />
+                                            <View style={styles.gridLineV} />
+                                            <View style={styles.gridLineH} />
+                                            <View style={[styles.gridLineH, { top: '66.66%' }]} />
+                                        </View>
+                                    </View>
                                 )}
 
-                                <View style={styles.gridContainer} pointerEvents="none">
-                                    <View style={styles.gridLineV} />
-                                    <View style={styles.gridLineV} />
-                                    <View style={styles.gridLineH} />
-                                    <View style={[styles.gridLineH, { top: '66.66%' }]} />
-                                </View>
+                                <TouchableOpacity
+                                    activeOpacity={0.9}
+                                    onPress={toggleRatio}
+                                    style={styles.fitToggleOverlay}
+                                >
+                                    <View style={styles.ratioLabelContainer}>
+                                        <Text style={styles.ratioLabelText}>
+                                            {selectedRatio === 1 ? '1:1' : selectedRatio === 0.8 ? '4:5' : selectedRatio > 1.7 ? '16:9' : 'Original'}
+                                        </Text>
+                                    </View>
 
-                                <View style={styles.ratioLabelContainer}>
-                                    <Text style={styles.ratioLabelText}>
-                                        {selectedRatio === 1 ? '1:1' : selectedRatio === 0.8 ? '4:5' : selectedRatio > 1.7 ? '16:9' : 'Original'}
-                                    </Text>
-                                </View>
-
-                                <View style={styles.fitToggleBtn} pointerEvents="none">
-                                    <Ionicons
-                                        name="resize-outline"
-                                        size={22}
-                                        color={COLORS.white}
-                                    />
-                                </View>
-                            </TouchableOpacity>
+                                    <View style={styles.fitToggleBtn} pointerEvents="none">
+                                        <Ionicons
+                                            name="resize-outline"
+                                            size={22}
+                                            color={COLORS.white}
+                                        />
+                                    </View>
+                                </TouchableOpacity>
+                            </View>
                         </View>
                     </View>
                 </View>
@@ -1428,10 +1470,20 @@ const styles = StyleSheet.create({
         fontWeight: 'bold',
     },
     previewWrapper: {
-        flex: 1,
+        width: Dimensions.get('window').width,
+        height: Dimensions.get('window').width, // Default to square container
         justifyContent: 'center',
         alignItems: 'center',
         backgroundColor: '#000',
+        position: 'relative',
+        overflow: 'hidden',
+    },
+    fitToggleOverlay: {
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
     },
     ratioPreview: {
         backgroundColor: '#111',
@@ -1540,13 +1592,58 @@ const styles = StyleSheet.create({
 
 // VideoPlayer component for video preview (Internal helper)
 function VideoPlayer({ uri }: { uri: string }) {
+    const player = useVideoPlayer(uri, (player) => {
+        player.loop = true;
+        player.play();
+    });
     return (
-        <ExpoVideo
-            source={{ uri }}
+        <VideoView
+            player={player}
             style={{ width: '100%', height: '100%' }}
-            useNativeControls
-            resizeMode={ResizeMode.CONTAIN}
-            shouldPlay
+            contentFit="contain"
+            nativeControls
         />
+    );
+}
+
+function RefiningVideoPlayer({ uri, selectedRatio, trimStart, trimEnd }: { uri: string, selectedRatio: number, trimStart: number, trimEnd: number }) {
+    const player = useVideoPlayer(uri, (player) => {
+        player.loop = true;
+        player.muted = true;
+        player.play();
+    });
+
+    React.useEffect(() => {
+        const interval = setInterval(() => {
+            if (player.currentTime * 1000 >= trimEnd) {
+                player.currentTime = trimStart / 1000;
+            }
+        }, 100);
+        return () => clearInterval(interval);
+    }, [player, trimStart, trimEnd]);
+
+    return (
+        <View
+            style={[
+                styles.ratioPreview,
+                {
+                    aspectRatio: selectedRatio || 1,
+                    width: Dimensions.get('window').width,
+                    backgroundColor: '#000'
+                }
+            ]}
+        >
+            <VideoView
+                player={player}
+                style={styles.fullImage}
+                contentFit="cover"
+            />
+            <View style={styles.gridContainer} pointerEvents="none">
+                <View style={styles.gridLineV} />
+                <View style={styles.gridLineV} />
+                <View style={styles.gridLineH} />
+                <View style={[styles.gridLineH, { top: '66.66%' }]} />
+            </View>
+        </View>
     );
 }

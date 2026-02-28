@@ -15,8 +15,10 @@ import {
     TouchableWithoutFeedback,
     Modal,
     ActivityIndicator,
+    Animated,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { COLORS, SIZES, SHADOWS } from '../constants/theme';
 import Header from '../components/Header';
@@ -83,7 +85,7 @@ export default function MarketScreen({ navigation }: { navigation: any }) {
             }
 
             if (selectedStatus !== 'All') {
-                params.status = selectedStatus === 'New Arrival' ? 'new' : selectedStatus === 'Upcoming' ? 'upcoming' : undefined;
+                params.status = selectedStatus === 'New Arrival' ? 'NEW' : selectedStatus === 'Upcoming' ? 'UPCOMING' : undefined;
             }
 
             if (activeFilters.brand && activeFilters.brand !== 'All') {
@@ -147,7 +149,11 @@ export default function MarketScreen({ navigation }: { navigation: any }) {
                     brand: item.model.brand.name,
                     model: item.vehicleName || item.model.name,
                     year: item.year.toString(),
-                    price: `₹${item.priceNumeric >= 100 ? (item.priceNumeric / 100).toFixed(2) + ' Cr' : item.priceNumeric + ' Lakh'}`,
+                    price: item.priceNumeric >= 10000000
+                        ? `₹${(item.priceNumeric / 10000000).toFixed(2)} Cr`.replace('.00', '')
+                        : item.priceNumeric >= 100000
+                            ? `₹${(item.priceNumeric / 100000).toFixed(2)} Lakh`.replace('.00', '')
+                            : `₹${item.priceNumeric.toLocaleString('en-IN')}`,
                     priceNumeric: item.priceNumeric,
                     emi: item.emiDisplay,
                     image: mainImage,
@@ -318,13 +324,22 @@ export default function MarketScreen({ navigation }: { navigation: any }) {
                     </View>
                 </View>
                 <Text style={styles.carModelText} numberOfLines={2}>{item.model}</Text>
-                <View style={styles.viewMoreContainer}>
-                    <Text style={styles.viewMoreText}>View Details</Text>
-                    <Ionicons name="chevron-forward" size={14} color={COLORS.primary} />
+                <View style={[styles.viewMoreContainer, {
+                    backgroundColor: '#F8F9FA',
+                    borderRadius: 8,
+                    paddingVertical: 6,
+                    marginTop: 8
+                }]}>
+                    <Text style={[styles.viewMoreText, { color: COLORS.text, fontSize: 13 }]}>View Details</Text>
+                    <Ionicons name="chevron-forward" size={14} color={COLORS.text} />
                 </View>
             </View>
         </TouchableOpacity>
     );
+
+    const insets = useSafeAreaInsets();
+    const scrollY = React.useRef(new Animated.Value(0)).current;
+    const scrollRef = React.useRef<FlatList>(null);
 
     return (
         <KeyboardAvoidingView
@@ -334,22 +349,27 @@ export default function MarketScreen({ navigation }: { navigation: any }) {
             {/* Header */}
             <Header
                 title="Market"
-                subtitle={isSearchVisible ? undefined : "Explore cars & bikes in the market"}
+                subtitle="Explore cars & bikes in the market"
+                scrollY={scrollY}
+                forceExpanded={isSearchVisible}
                 rightComponent={
                     <View style={styles.headerRow}>
                         <TouchableOpacity
                             style={styles.headerAction}
                             onPress={() => {
-                                setIsSearchVisible(!isSearchVisible);
                                 if (isSearchVisible) {
+                                    setIsSearchVisible(false);
                                     setSearchQuery('');
                                     Keyboard.dismiss();
+                                } else {
+                                    scrollRef.current?.scrollToOffset({ offset: 0, animated: true });
+                                    setTimeout(() => setIsSearchVisible(true), 200);
                                 }
                             }}
                         >
                             <Ionicons name={isSearchVisible ? "close" : "search"} size={20} color={COLORS.white} />
                         </TouchableOpacity>
-                        <TouchableOpacity
+                        {/* <TouchableOpacity
                             style={styles.headerAction}
                             onPress={() => setIsFilterVisible(true)}
                         >
@@ -357,7 +377,7 @@ export default function MarketScreen({ navigation }: { navigation: any }) {
                             {(activeFilters.brand !== 'All' || activeFilters.bodyType !== 'All' || activeFilters.priceRange !== 'All') && (
                                 <View style={styles.filterDot} />
                             )}
-                        </TouchableOpacity>
+                        </TouchableOpacity> */}
                         <TouchableOpacity
                             style={styles.headerAction}
                             onPress={() => navigation.navigate('Wishlist')}
@@ -367,24 +387,37 @@ export default function MarketScreen({ navigation }: { navigation: any }) {
                     </View>
                 }
             >
+                {/* Search in Header */}
                 {isSearchVisible && (
-                    <View style={styles.searchContainer}>
-                        <Ionicons name="search" size={18} color={COLORS.textLight} />
-                        <TextInput
-                            style={styles.searchInput}
-                            placeholder="Search car brand or model..."
-                            placeholderTextColor={COLORS.textExtraLight}
-                            value={searchQuery}
-                            onChangeText={setSearchQuery}
-                            autoFocus
-                            returnKeyType="search"
-                            onSubmitEditing={() => Keyboard.dismiss()}
-                        />
-                        {searchQuery.length > 0 && (
-                            <TouchableOpacity onPress={() => setSearchQuery('')}>
-                                <Ionicons name="close-circle" size={18} color={COLORS.textLight} />
-                            </TouchableOpacity>
-                        )}
+                    <View style={styles.headerSearchBarActive}>
+                        <TouchableOpacity
+                            onPress={() => {
+                                setIsSearchVisible(false);
+                                setSearchQuery('');
+                                Keyboard.dismiss();
+                            }}
+                            style={styles.headerBackBtn}
+                        >
+                            <Ionicons name="arrow-back" size={24} color={COLORS.white} />
+                        </TouchableOpacity>
+                        <View style={styles.headerSearchInputWrapper}>
+                            <Ionicons name="search" size={20} color={COLORS.textLight} />
+                            <TextInput
+                                style={styles.headerSearchInput}
+                                placeholder="Search car brand or model..."
+                                placeholderTextColor={COLORS.textLight}
+                                value={searchQuery}
+                                onChangeText={setSearchQuery}
+                                autoFocus
+                                returnKeyType="search"
+                                onSubmitEditing={() => Keyboard.dismiss()}
+                            />
+                            {searchQuery.length > 0 && (
+                                <TouchableOpacity onPress={() => setSearchQuery('')} style={{ padding: 4 }}>
+                                    <Ionicons name="close-circle" size={18} color={COLORS.textLight} />
+                                </TouchableOpacity>
+                            )}
+                        </View>
                     </View>
                 )}
             </Header>
@@ -409,6 +442,7 @@ export default function MarketScreen({ navigation }: { navigation: any }) {
                                     style={[
                                         styles.filterChip,
                                         selectedType === type.name && styles.filterChipActive,
+                                        { flex: 1, minWidth: 80, justifyContent: 'center' }
                                     ]}
                                     onPress={() => setSelectedType(type.name)}
                                 >
@@ -423,45 +457,7 @@ export default function MarketScreen({ navigation }: { navigation: any }) {
                                 </TouchableOpacity>
                             ))}
 
-                            {/* Divider */}
-                            <View style={styles.filterDivider} />
 
-                            {/* Status Filters */}
-                            {statusCategories.map((status) => (
-                                <TouchableOpacity
-                                    key={status}
-                                    style={[
-                                        styles.filterChip,
-                                        selectedStatus === status && styles.filterChipActive,
-                                    ]}
-                                    onPress={() => setSelectedStatus(status)}
-                                >
-                                    {status === 'New Arrival' && (
-                                        <Ionicons
-                                            name="sparkles"
-                                            size={13}
-                                            color={selectedStatus === status ? COLORS.white : COLORS.primary}
-                                            style={{ marginRight: 5 }}
-                                        />
-                                    )}
-                                    {status === 'Upcoming' && (
-                                        <Ionicons
-                                            name="time-outline"
-                                            size={13}
-                                            color={selectedStatus === status ? COLORS.white : COLORS.primary}
-                                            style={{ marginRight: 5 }}
-                                        />
-                                    )}
-                                    <Text
-                                        style={[
-                                            styles.filterChipText,
-                                            selectedStatus === status && styles.filterChipTextActive,
-                                        ]}
-                                    >
-                                        {status}
-                                    </Text>
-                                </TouchableOpacity>
-                            ))}
 
                             {/* Filter Button */}
                             <TouchableOpacity
@@ -485,7 +481,8 @@ export default function MarketScreen({ navigation }: { navigation: any }) {
 
 
                     {/* Cars Grid */}
-                    <FlatList
+                    <Animated.FlatList
+                        ref={scrollRef as any}
                         data={filteredCars}
                         renderItem={renderCarItem}
                         keyExtractor={(item) => item.id}
@@ -493,6 +490,11 @@ export default function MarketScreen({ navigation }: { navigation: any }) {
                         contentContainerStyle={styles.carsList}
                         columnWrapperStyle={styles.carsRow}
                         keyboardShouldPersistTaps="handled"
+                        onScroll={Animated.event(
+                            [{ nativeEvent: { contentOffset: { y: scrollY } } }],
+                            { useNativeDriver: false }
+                        )}
+                        scrollEventThrottle={16}
                         ListEmptyComponent={
                             <View style={styles.emptySearch}>
                                 <Ionicons name="search-outline" size={60} color={COLORS.textExtraLight} style={{ marginBottom: 15 }} />
@@ -684,7 +686,8 @@ export default function MarketScreen({ navigation }: { navigation: any }) {
                         </TouchableOpacity>
                     </Modal>
                 </>
-            )}
+            )
+            }
         </KeyboardAvoidingView >
     );
 }
@@ -1005,9 +1008,13 @@ const styles = StyleSheet.create({
     },
     viewMoreContainer: {
         flexDirection: 'row',
-        justifyContent: 'flex-start',
+        justifyContent: 'center',
         alignItems: 'center',
         marginTop: 4,
+        paddingTop: 8,
+        borderTopWidth: 1,
+        borderTopColor: '#F1F5F9',
+        width: '100%',
         gap: 4,
     },
     viewMoreText: {
@@ -1116,20 +1123,27 @@ const styles = StyleSheet.create({
         padding: 8,
         borderRadius: 20,
     },
-    searchContainer: {
+    headerSearchBarActive: {
+        flex: 1,
+        flexDirection: 'row',
+        alignItems: 'center',
+    },
+    headerBackBtn: {
+        marginRight: 12,
+    },
+    headerSearchInputWrapper: {
+        flex: 1,
         flexDirection: 'row',
         alignItems: 'center',
         backgroundColor: COLORS.white,
-        borderRadius: 15,
-        paddingHorizontal: 15,
-        marginTop: 15,
-        height: 45,
-        ...SHADOWS.light,
+        borderRadius: 12,
+        paddingHorizontal: 12,
+        height: 40,
     },
-    searchInput: {
+    headerSearchInput: {
         flex: 1,
-        marginLeft: 10,
-        fontSize: 16,
+        marginLeft: 8,
+        fontSize: 15,
         color: COLORS.text,
     },
     emptySearch: {

@@ -12,6 +12,7 @@ import {
     ActivityIndicator,
     KeyboardAvoidingView,
     ToastAndroid,
+    Animated,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -45,6 +46,11 @@ export default function AddDocumentScreen({ navigation, route }: { navigation: a
     const [isSaving, setIsSaving] = useState(false);
     const [isKeyboardVisible, setIsKeyboardVisible] = useState(false);
     const [isTypeDropdownVisible, setIsTypeDropdownVisible] = useState(false);
+    const scrollY = React.useRef(new Animated.Value(0)).current;
+
+    React.useEffect(() => {
+        navigation.setParams({ scrollY } as any);
+    }, []);
 
     useEffect(() => {
         const fetchDocTypes = async () => {
@@ -326,7 +332,15 @@ export default function AddDocumentScreen({ navigation, route }: { navigation: a
             keyboardVerticalOffset={Platform.OS === 'ios' ? 80 : 0}
         >
             <View style={styles.container}>
-                <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+                <Animated.ScrollView
+                    contentContainerStyle={styles.content}
+                    showsVerticalScrollIndicator={false}
+                    onScroll={Animated.event(
+                        [{ nativeEvent: { contentOffset: { y: scrollY } } }],
+                        { useNativeDriver: false }
+                    )}
+                    scrollEventThrottle={16}
+                >
                     <View style={[styles.inputGroup, { marginTop: 0 }]}>
                         <Text style={styles.label}>Document Type <Text style={styles.required}>*</Text></Text>
                         <TouchableOpacity
@@ -449,7 +463,7 @@ export default function AddDocumentScreen({ navigation, route }: { navigation: a
                     </View>
 
                     <View style={{ height: 120 }} />
-                </ScrollView>
+                </Animated.ScrollView>
 
                 {!isKeyboardVisible && (
                     <View style={[

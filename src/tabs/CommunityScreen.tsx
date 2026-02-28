@@ -15,17 +15,23 @@ import {
     TouchableWithoutFeedback,
     Image,
     ToastAndroid,
+    ActivityIndicator,
     FlatList,
+    Animated,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import apiClient from '../api/apiClient';
 
 // Keyboard avoiding behavior
 const keyboardBehavior = Platform.OS === 'ios' ? 'padding' : 'height';
 import { Ionicons } from '@expo/vector-icons';
 import { COLORS, SIZES, SHADOWS } from '../constants/theme';
+import Header from '../components/Header';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import CommunityPostCard from '../components/CommunityPostCard';
 import CommentBottomSheet from '../components/CommentBottomSheet';
+import LikersBottomSheet from '../components/LikersBottomSheet';
 import StoryList from '../components/StoryList';
 import { CommunityPost } from '../types/Community';
 import { Story, StoryGroup } from '../types/Story';
@@ -44,7 +50,7 @@ interface CommunityScreenProps {
 export default function CommunityScreen({ navigation }: CommunityScreenProps) {
     const { user } = useAuth();
     const [selectedCategory, setSelectedCategory] = useState('Feed');
-    const { wishlist, fetchWishlist } = useApp();
+    const { communityUnreadCount } = useApp();
 
     const [communityPosts, setCommunityPosts] = useState<CommunityPost[]>([]);
     const [stories, setStories] = useState<Story[]>([]);
@@ -52,6 +58,7 @@ export default function CommunityScreen({ navigation }: CommunityScreenProps) {
     const [isLoading, setIsLoading] = useState(false);
     const [isCommentsLoading, setIsCommentsLoading] = useState(false);
     const [activePostId, setActivePostId] = useState<string | number | null>(null);
+    const [viewedStoryIds, setViewedStoryIds] = useState<Set<string>>(new Set());
 
     const viewabilityConfig = useRef({
         itemVisiblePercentThreshold: 50
@@ -144,47 +151,35 @@ export default function CommunityScreen({ navigation }: CommunityScreenProps) {
     // Fetch active stories
     const fetchStories = async () => {
         try {
-            const url = user ? `/story/active?userId=${user.id}` : '/story/active';
-            const response = await apiClient.get(url);
+            const response = await apiClient.get('/story/active');
             const data = response.data || [];
 
-            const mappedStories: Story[] = await Promise.all(
-                data.map(async (story: any) => {
-                    let hasLiked = story.isLikedByCurrentUser || false;
-                    let isFetched = false;
+            // Load local viewed IDs
+            const storedJson = await AsyncStorage.getItem('viewed_story_ids');
+            const storedIds = storedJson ? JSON.parse(storedJson) : [];
+            const viewedSet = new Set<string>(storedIds);
+            setViewedStoryIds(viewedSet);
 
-                    // Fallback to checking the likers list directly if the user is logged in
-                    if (!hasLiked && user) {
-                        try {
-                            const likersResponse = await apiClient.get(`/story/${story.id}/likers`);
-                            const likersList = likersResponse.data || [];
-                            hasLiked = likersList.some((liker: any) => String(liker.id) === String(user.id));
-                            isFetched = true;
-                        } catch (e) {
-                            console.error(`Failed to fetch likers for story ${story.id}`);
-                        }
-                    }
-
-                    return {
-                        id: story.id.toString(),
-                        userId: story.userId.toString(),
-                        userName: story.user?.username || `User ${story.userId}`,
-                        userAvatar: story.user?.profilePicUrl,
-                        mediaUri: story.mediaUrl,
-                        mediaType: story.mediaType?.toLowerCase() || 'image',
-                        caption: story.caption,
-                        captionPosition: story.captionMetadata?.captionPosition,
-                        captionStyle: story.captionMetadata?.captionStyle,
-                        timestamp: new Date(story.createdAt).getTime(),
-                        expiresAt: new Date(story.expiresAt).getTime(),
-                        likesCount: story.likesCount || 0,
-                        viewsCount: story.viewsCount || 0,
-                        isLiked: hasLiked,
-                        isLikedFetched: isFetched,
-                        viewed: false
-                    };
-                })
-            );
+            const mappedStories: Story[] = data.map((story: any) => {
+                const isViewedLocally = viewedSet.has(story.id.toString());
+                return {
+                    id: story.id.toString(),
+                    userId: story.userId.toString(),
+                    userName: story.user?.username || `User ${story.userId}`,
+                    userAvatar: story.user?.profilePicUrl,
+                    mediaUri: story.mediaUrl,
+                    mediaType: story.mediaType?.toLowerCase() || 'image',
+                    caption: story.caption,
+                    captionPosition: story.captionMetadata?.captionPosition,
+                    captionStyle: story.captionMetadata?.captionStyle,
+                    timestamp: new Date(story.createdAt).getTime(),
+                    expiresAt: new Date(story.expiresAt).getTime(),
+                    viewed: story.viewed || isViewedLocally,
+                    viewsCount: story.viewsCount || 0,
+                    likesCount: story.likesCount || 0,
+                    isLiked: story.isLiked || false,
+                };
+            });
 
             setStories(mappedStories);
         } catch (error) {
@@ -349,7 +344,11 @@ export default function CommunityScreen({ navigation }: CommunityScreenProps) {
             return acc;
         }, {} as Record<string, StoryGroup>);
 
-        return Object.values(grouped);
+        return Object.values(grouped).sort((a, b) => {
+            if (a.hasUnviewed && !b.hasUnviewed) return -1;
+            if (!a.hasUnviewed && b.hasUnviewed) return 1;
+            return 0;
+        });
     };
     const scrollRef = React.useRef<FlatList>(null);
 
@@ -360,8 +359,43 @@ export default function CommunityScreen({ navigation }: CommunityScreenProps) {
     // Search state
     const [searchActive, setSearchActive] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
+    const [userSearchResults, setUserSearchResults] = useState<any[]>([]);
+    const [isSearchingUsers, setIsSearchingUsers] = useState(false);
+    const [recentSearches, setRecentSearches] = useState<any[]>([]);
+    const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-    const [unreadNotifications, setUnreadNotifications] = useState(3);
+    const addToRecent = (userItem: any) => {
+        setRecentSearches(prev => {
+            const filtered = prev.filter(u => u.id !== userItem.id);
+            return [userItem, ...filtered].slice(0, 10); // Keep last 10
+        });
+    };
+
+    const removeFromRecent = (userId: any) => {
+        setRecentSearches(prev => prev.filter(u => u.id !== userId));
+    };
+
+    const searchUsers = async (query: string) => {
+        if (!query.trim()) {
+            setUserSearchResults([]);
+            return;
+        }
+        setIsSearchingUsers(true);
+        try {
+            const response = await apiClient.get('/users/search', { params: { query: query.trim() } });
+            setUserSearchResults(response.data || []);
+        } catch (error) {
+            setUserSearchResults([]);
+        } finally {
+            setIsSearchingUsers(false);
+        }
+    };
+
+    const handleSearchChange = (text: string) => {
+        setSearchQuery(text);
+        if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+        searchDebounceRef.current = setTimeout(() => searchUsers(text), 400);
+    };
 
     // Edit modal state
     const [editModalVisible, setEditModalVisible] = useState(false);
@@ -369,6 +403,10 @@ export default function CommunityScreen({ navigation }: CommunityScreenProps) {
     const [editContent, setEditContent] = useState('');
     const [editLocation, setEditLocation] = useState('');
     const [editTags, setEditTags] = useState('');
+
+    // Likers sheet state
+    const [likersSheetVisible, setLikersSheetVisible] = useState(false);
+    const [selectedPostIdForLikers, setSelectedPostIdForLikers] = useState<string | number | null>(null);
 
     const categories = ['Feed', 'Trending', 'Following'];
 
@@ -379,8 +417,24 @@ export default function CommunityScreen({ navigation }: CommunityScreenProps) {
     const TRENDING_THRESHOLD_VIEWS = 1000;
     const TRENDING_THRESHOLD_COMMENTS = 10;
 
-    // Filter posts based on selected category
-    const filteredPosts = allPosts.filter(post => {
+    // Filter posts based on selected category and search query
+    const filteredPosts = (allPosts || []).filter(post => {
+        // Search filter
+        if (searchQuery.trim()) {
+            const query = searchQuery.toLowerCase().trim();
+            const matchesContent = post.content?.toLowerCase().includes(query);
+            const matchesUser = post.userName?.toLowerCase().includes(query);
+            const matchesLocation = post.location?.toLowerCase().includes(query);
+            const matchesTags = Array.isArray(post.tags)
+                ? post.tags.some(tag => tag.toLowerCase().includes(query))
+                : post.tags?.toLowerCase().includes(query);
+
+            if (!matchesContent && !matchesUser && !matchesLocation && !matchesTags) {
+                return false;
+            }
+        }
+
+        // Category filter
         if (selectedCategory === 'Feed') return true;
 
         if (selectedCategory === 'Trending') {
@@ -395,8 +449,8 @@ export default function CommunityScreen({ navigation }: CommunityScreenProps) {
 
         if (selectedCategory === 'Following') {
             // Following = Only from followed users OR your own posts
-            const isFollowed = user?.following.includes(post.userId.toString());
-            const isOwnPost = user && post.userId.toString() === user.id;
+            const isFollowed = user?.following?.includes(post.userId?.toString());
+            const isOwnPost = user && post.userId?.toString() === user.id;
             // Also include posts specifically categorized as 'following' for mock data
             return isFollowed || isOwnPost || post.category === 'following';
         }
@@ -488,7 +542,6 @@ export default function CommunityScreen({ navigation }: CommunityScreenProps) {
         }
     };
 
-
     const handleDeletePost = (postId: string | number) => {
         Alert.alert(
             'Delete Post',
@@ -506,6 +559,19 @@ export default function CommunityScreen({ navigation }: CommunityScreenProps) {
         );
     };
 
+    const handleShowLikers = (postId: string | number) => {
+        setSelectedPostIdForLikers(postId);
+        setLikersSheetVisible(true);
+    };
+
+    const handleUserPress = (userId: string, userName: string) => {
+        if (userId === user?.id?.toString()) {
+            navigation.navigate('Profile' as any);
+        } else {
+            navigation.navigate('OtherUserProfile', { userId, userName });
+        }
+    };
+
     const handleAddStory = () => {
         (navigation as any).navigate('AddStory');
     };
@@ -517,89 +583,101 @@ export default function CommunityScreen({ navigation }: CommunityScreenProps) {
             storyGroup,
             allGroups,
             startIndex: startIndex >= 0 ? startIndex : 0,
-            onUpdateStoryLike: (storyId: string | number, newIsLiked: boolean, newLikesCount: number) => {
-                setStories(prev => prev.map(s => {
-                    if (String(s.id) === String(storyId)) {
-                        return { ...s, isLiked: newIsLiked, likesCount: newLikesCount };
-                    }
-                    return s;
-                }));
+            onClose: () => {
+                fetchStories(); // Refresh to re-sort and update viewed states
             }
         });
     };
 
     const handlePostImagePress = (postId: string | number) => {
-        const post = filteredPosts.find(p => p.id === postId);
+        // Filter out text-only posts for PostDetail (Reels view)
+        const mediaOnlyPosts = filteredPosts.filter(p => p.media && p.media.length > 0);
+        const post = mediaOnlyPosts.find(p => p.id === postId);
+
         if (post) {
             (navigation as any).navigate('PostDetail', {
                 initialPost: post,
-                allPosts: filteredPosts,
+                allPosts: mediaOnlyPosts,
             });
         }
     };
 
+    const insets = useSafeAreaInsets();
+    const scrollY = React.useRef(new Animated.Value(0)).current;
+
     return (
         <View style={styles.container}>
             {/* Header */}
-            <LinearGradient
-                colors={[COLORS.primary, COLORS.primaryDark]}
-                style={styles.header}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
+            <Header
+                title="Community"
+                scrollY={scrollY}
+                forceExpanded={searchActive}
+                rightComponent={
+                    !searchActive && (
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 15 }}>
+                            <TouchableOpacity onPress={() => {
+                                scrollRef.current?.scrollToOffset({ offset: 0, animated: true });
+                                setTimeout(() => setSearchActive(true), 200);
+                            }}>
+                                <Ionicons name="search" size={24} color={COLORS.white} />
+                            </TouchableOpacity>
+                            <TouchableOpacity onPress={() => navigation.navigate('Messages' as any)}>
+                                <Ionicons name="chatbubble-ellipses-outline" size={24} color={COLORS.white} />
+                            </TouchableOpacity>
+                            <TouchableOpacity onPress={() => {
+                                navigation.navigate('CommunityNotifications' as any);
+                            }}>
+                                <View>
+                                    <Ionicons name="notifications-outline" size={24} color={COLORS.white} />
+                                    {communityUnreadCount > 0 && (
+                                        <View style={styles.notificationBadge}>
+                                            <Text style={styles.notificationBadgeText}>{communityUnreadCount}</Text>
+                                        </View>
+                                    )}
+                                </View>
+                            </TouchableOpacity>
+                        </View>
+                    )
+                }
             >
-                <View style={[styles.headerTop, { alignItems: 'center' }]}>
-                    {searchActive ? (
-                        <View style={styles.headerSearchBar}>
+                {searchActive && (
+                    <View style={styles.headerSearchBarActive}>
+                        <TouchableOpacity
+                            onPress={() => {
+                                setSearchActive(false);
+                                setSearchQuery('');
+                                setUserSearchResults([]);
+                            }}
+                            style={styles.headerBackBtn}
+                        >
+                            <Ionicons name="arrow-back" size={24} color={COLORS.white} />
+                        </TouchableOpacity>
+                        <View style={styles.headerSearchInputWrapper}>
                             <Ionicons name="search" size={20} color={COLORS.textLight} />
                             <TextInput
                                 style={styles.headerSearchInput}
-                                placeholder="Search community..."
+                                placeholder="Search"
                                 placeholderTextColor={COLORS.textLight}
                                 value={searchQuery}
-                                onChangeText={setSearchQuery}
+                                onChangeText={handleSearchChange}
                                 autoFocus
                             />
-                            <TouchableOpacity onPress={() => {
-                                setSearchActive(false);
-                                setSearchQuery('');
-                            }}>
-                                <Ionicons name="close-circle" size={20} color={COLORS.textLight} />
-                            </TouchableOpacity>
-                        </View>
-                    ) : (
-                        <>
-                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                                <Ionicons name="car-sport" size={28} color={COLORS.white} />
-                                <Text style={styles.headerTitle}>Community</Text>
-                            </View>
-                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 15 }}>
-                                <TouchableOpacity onPress={() => setSearchActive(true)}>
-                                    <Ionicons name="search" size={24} color={COLORS.white} />
-                                </TouchableOpacity>
-                                <TouchableOpacity onPress={() => navigation.navigate('Messages' as any)}>
-                                    <Ionicons name="chatbubble-ellipses-outline" size={24} color={COLORS.white} />
-                                </TouchableOpacity>
+                            {searchQuery.length > 0 && (
                                 <TouchableOpacity onPress={() => {
-                                    navigation.navigate('CommunityNotifications' as any);
-                                    setUnreadNotifications(0);
-                                }}>
-                                    <View>
-                                        <Ionicons name="notifications-outline" size={24} color={COLORS.white} />
-                                        {unreadNotifications > 0 && (
-                                            <View style={styles.notificationBadge}>
-                                                <Text style={styles.notificationBadgeText}>{unreadNotifications}</Text>
-                                            </View>
-                                        )}
-                                    </View>
+                                    setSearchQuery('');
+                                    setUserSearchResults([]);
+                                }} style={{ padding: 4 }}>
+                                    <Ionicons name="close-circle" size={18} color={COLORS.textLight} />
                                 </TouchableOpacity>
-                            </View>
-                        </>
-                    )}
-                </View>
-            </LinearGradient>
+                            )}
+                        </View>
+                    </View>
+                )}
+            </Header>
+
 
             {/* Categories Chips */}
-            <View style={styles.tabBar}>
+            {/* <View style={styles.tabBar}>
                 {categories.map((category) => (
                     <TouchableOpacity
                         key={category}
@@ -619,13 +697,104 @@ export default function CommunityScreen({ navigation }: CommunityScreenProps) {
                         </Text>
                     </TouchableOpacity>
                 ))}
-            </View>
+            </View> */}
+
+            {/* User Search Results Overlay */}
+            {searchActive && (
+                <View style={styles.userSearchOverlayFull}>
+                    <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 16 }}>
+                        {searchQuery.trim().length === 0 ? (
+                            recentSearches.length > 0 && (
+                                <>
+                                    <View style={styles.sectionHeader}>
+                                        <Text style={styles.userSearchLabel}>Recent</Text>
+                                        <TouchableOpacity onPress={() => setRecentSearches([])}>
+                                            <Text style={styles.seeAllText}>Clear all</Text>
+                                        </TouchableOpacity>
+                                    </View>
+                                    {recentSearches.map((u) => (
+                                        <View key={u.id} style={styles.userSearchRow}>
+                                            <TouchableOpacity
+                                                style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 12 }}
+                                                onPress={() => {
+                                                    setSearchActive(false);
+                                                    setSearchQuery('');
+                                                    setUserSearchResults([]);
+                                                    handleUserPress(String(u.id), u.username);
+                                                }}
+                                                activeOpacity={0.7}
+                                            >
+                                                <View style={styles.userSearchAvatar}>
+                                                    <Image
+                                                        source={u.profilePicUrl ? { uri: u.profilePicUrl } : COLORS.defaultProfileImage}
+                                                        style={styles.userSearchAvatarImg}
+                                                    />
+                                                </View>
+                                                <View style={{ flex: 1 }}>
+                                                    <Text style={styles.userSearchName}>{u.username}</Text>
+                                                    <Text style={styles.userSearchFullName}>{u.name || u.username}</Text>
+                                                </View>
+                                            </TouchableOpacity>
+                                            <TouchableOpacity
+                                                onPress={() => removeFromRecent(u.id)}
+                                                style={{ padding: 8 }}
+                                            >
+                                                <Ionicons name="close" size={20} color={COLORS.textLight} />
+                                            </TouchableOpacity>
+                                        </View>
+                                    ))}
+                                </>
+                            )
+                        ) : isSearchingUsers ? (
+                            <View style={styles.searchLoadingRow}>
+                                <Ionicons name="search" size={16} color={COLORS.textLight} />
+                                <Text style={styles.searchLoadingText}>Searching...</Text>
+                            </View>
+                        ) : userSearchResults.length > 0 ? (
+                            userSearchResults.map((u) => (
+                                <TouchableOpacity
+                                    key={u.id}
+                                    style={styles.userSearchRow}
+                                    onPress={() => {
+                                        addToRecent(u);
+                                        setSearchActive(false);
+                                        setSearchQuery('');
+                                        setUserSearchResults([]);
+                                        handleUserPress(String(u.id), u.username);
+                                    }}
+                                    activeOpacity={0.7}
+                                >
+                                    <View style={styles.userSearchAvatar}>
+                                        <Image
+                                            source={u.profilePicUrl ? { uri: u.profilePicUrl } : COLORS.defaultProfileImage}
+                                            style={styles.userSearchAvatarImg}
+                                        />
+                                    </View>
+                                    <View style={{ flex: 1 }}>
+                                        <Text style={styles.userSearchName}>{u.username}</Text>
+                                        <Text style={styles.userSearchFullName}>{u.name || u.username}</Text>
+                                    </View>
+                                </TouchableOpacity>
+                            ))
+                        ) : (
+                            <View style={styles.noUserResultsContainer}>
+                                <Text style={styles.noUserResults}>No results found for "{searchQuery}"</Text>
+                            </View>
+                        )}
+                    </ScrollView>
+                </View>
+            )}
 
             {/* Posts List */}
-            <FlatList
+            <Animated.FlatList
                 ref={scrollRef as any}
                 data={filteredPosts}
                 keyExtractor={(item) => item.id.toString()}
+                onScroll={Animated.event(
+                    [{ nativeEvent: { contentOffset: { y: scrollY } } }],
+                    { useNativeDriver: false }
+                )}
+                scrollEventThrottle={16}
                 renderItem={({ item }) => (
                     <CommunityPostCard
                         post={item}
@@ -638,6 +807,7 @@ export default function CommunityScreen({ navigation }: CommunityScreenProps) {
                         isSaved={item.isSaved}
                         onToggleSave={() => togglePostSave(item.id)}
                         isActive={activePostId === item.id}
+                        onShowLikers={handleShowLikers}
                     />
                 )}
                 ListHeaderComponent={() => (
@@ -715,6 +885,14 @@ export default function CommunityScreen({ navigation }: CommunityScreenProps) {
                 onAddComment={handleAddComment}
             />
 
+            {/* Likers Bottom Sheet */}
+            <LikersBottomSheet
+                visible={likersSheetVisible}
+                onClose={() => setLikersSheetVisible(false)}
+                postId={selectedPostIdForLikers}
+                onUserPress={handleUserPress}
+            />
+
             {/* Edit Post Modal */}
             <Modal
                 visible={editModalVisible}
@@ -725,6 +903,7 @@ export default function CommunityScreen({ navigation }: CommunityScreenProps) {
                 <KeyboardAvoidingView
                     behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
                     style={styles.modalOverlay}
+                    keyboardVerticalOffset={Platform.OS === 'android' ? 60 : 0}
                 >
                     <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
                         <View style={styles.editModalContainer}>
@@ -1014,62 +1193,139 @@ const styles = StyleSheet.create({
         fontSize: 10,
         fontWeight: 'bold',
     },
-    // Suggested Users
-    suggestionsSection: {
-        paddingVertical: 15,
-        backgroundColor: '#F8FAFC',
+    // User search overlay
+    userSearchOverlay: {
+        position: 'absolute',
+        top: 100,
+        left: 0,
+        right: 0,
+        zIndex: 999,
+        backgroundColor: COLORS.white,
+        borderBottomLeftRadius: 16,
+        borderBottomRightRadius: 16,
+        paddingHorizontal: 16,
+        paddingTop: 10,
+        paddingBottom: 16,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.12,
+        shadowRadius: 10,
+        elevation: 8,
+    },
+    searchLoadingRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+        paddingVertical: 12,
+    },
+    searchLoadingText: {
+        fontSize: 14,
+        color: COLORS.textLight,
+    },
+    userSearchLabel: {
+        fontSize: 12,
+        fontWeight: '700',
+        color: COLORS.textLight,
+        textTransform: 'uppercase',
+        letterSpacing: 0.8,
+        marginBottom: 8,
+    },
+    userSearchRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingVertical: 10,
+        gap: 12,
         borderBottomWidth: 1,
-        borderBottomColor: '#F1F5F9',
+        borderBottomColor: '#F0F0F0',
+    },
+    userSearchAvatar: {
+        width: 44,
+        height: 44,
+        borderRadius: 22,
+        overflow: 'hidden',
+    },
+    userSearchAvatarImg: {
+        width: 44,
+        height: 44,
+        borderRadius: 22,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    userSearchAvatarInitial: {
+        color: COLORS.white,
+        fontSize: 18,
+        fontWeight: 'bold',
+    },
+    userSearchName: {
+        fontSize: 15,
+        fontWeight: '700',
+        color: COLORS.text,
+    },
+    userSearchFullName: {
+        fontSize: 12,
+        color: COLORS.textLight,
+        marginTop: 1,
+    },
+    noUserResults: {
+        fontSize: 14,
+        color: COLORS.textLight,
+        paddingVertical: 14,
+        textAlign: 'center',
+    },
+    headerSearchBarActive: {
+        flex: 1,
+        flexDirection: 'row',
+        alignItems: 'center',
+    },
+    headerBackBtn: {
+        marginRight: 12,
+    },
+    headerSearchInputWrapper: {
+        flex: 1,
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: COLORS.white,
+        borderRadius: 12,
+        paddingHorizontal: 12,
+        height: 40,
+    },
+    searchOverlay: {
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        right: 0,
+        zIndex: 1000,
+        paddingBottom: 16,
+    },
+    searchOverlayInner: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingHorizontal: 16,
+        paddingTop: 10,
+    },
+    userSearchOverlayFull: {
+        position: 'absolute',
+        top: Platform.OS === 'ios' ? 125 : 115, // Adjusted to cover below the expanded header
+        left: 0,
+        right: 0,
+        bottom: 0,
+        zIndex: 999,
+        backgroundColor: COLORS.white,
     },
     sectionHeader: {
         flexDirection: 'row',
         justifyContent: 'space-between',
         alignItems: 'center',
-        paddingHorizontal: 20,
-        marginBottom: 10,
+        marginTop: 15,
+        marginBottom: 8,
     },
     seeAllText: {
         fontSize: 14,
         color: COLORS.primary,
         fontWeight: '600',
     },
-    suggestionsList: {
-        paddingHorizontal: 20,
-        gap: 15,
-    },
-    suggestionCard: {
-        width: 120,
-        backgroundColor: COLORS.white,
-        borderRadius: 15,
-        padding: 12,
+    noUserResultsContainer: {
         alignItems: 'center',
-        borderWidth: 1,
-        borderColor: '#F1F5F9',
-        ...SHADOWS.light,
-    },
-    suggestionAvatar: {
-        width: 60,
-        height: 60,
-        borderRadius: 30,
-        marginBottom: 8,
-    },
-    suggestionName: {
-        fontSize: 13,
-        fontWeight: '600',
-        color: COLORS.text,
-        marginBottom: 10,
-    },
-    followBtnSmall: {
-        backgroundColor: COLORS.primary,
-        paddingHorizontal: 15,
-        paddingVertical: 6,
-        borderRadius: 15,
-        width: '100%',
-        alignItems: 'center',
-    },
-    followBtnTextSmall: {
-        color: COLORS.white,
-        fontSize: 12,
-        fontWeight: 'bold',
+        paddingVertical: 40,
     },
 });

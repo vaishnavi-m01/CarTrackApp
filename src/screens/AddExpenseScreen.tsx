@@ -11,6 +11,7 @@ import {
     Platform,
     ActivityIndicator,
     ToastAndroid,
+    Animated,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -43,6 +44,12 @@ export default function AddExpenseScreen({ navigation, route }: { navigation: an
     const [isLoadingCategories, setIsLoadingCategories] = useState(true);
     const [isVehicleDropdownOpen, setIsVehicleDropdownOpen] = useState(false);
     const [isKeyboardVisible, setIsKeyboardVisible] = useState(false);
+
+    const scrollY = React.useRef(new Animated.Value(0)).current;
+
+    useEffect(() => {
+        navigation.setParams({ scrollY } as any);
+    }, []);
 
     useEffect(() => {
         fetchCategories();
@@ -170,7 +177,15 @@ export default function AddExpenseScreen({ navigation, route }: { navigation: an
         >
             <View style={styles.container}>
 
-                <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+                <Animated.ScrollView
+                    contentContainerStyle={styles.content}
+                    showsVerticalScrollIndicator={false}
+                    onScroll={Animated.event(
+                        [{ nativeEvent: { contentOffset: { y: scrollY } } }],
+                        { useNativeDriver: false }
+                    )}
+                    scrollEventThrottle={16}
+                >
 
                     {/* Vehicle Selector */}
                     <View style={styles.inputGroup}>
@@ -339,7 +354,7 @@ export default function AddExpenseScreen({ navigation, route }: { navigation: an
                     </View>
 
                     <View style={{ height: 120 }} />
-                </ScrollView>
+                </Animated.ScrollView>
 
                 {!isKeyboardVisible && (
                     <View style={[
@@ -394,9 +409,9 @@ const styles = StyleSheet.create({
     typeChipTextActive: { color: COLORS.white, fontWeight: 'bold' },
     dateDisplay: { flexDirection: 'row', alignItems: 'center', backgroundColor: COLORS.white, padding: 14, borderRadius: 12, borderWidth: 1, borderColor: '#e2e8f0', gap: 10 },
     dateText: { fontSize: 15, color: COLORS.text, fontWeight: '500' },
-    footer: { position: 'absolute', bottom: 0, left: 0, right: 0, paddingHorizontal: SIZES.padding, paddingTop: 15, backgroundColor: COLORS.white, borderTopWidth: 1, borderTopColor: '#F1F5F9', ...SHADOWS.medium },
+    footer: { position: 'absolute', bottom: 0, left: 0, right: 0, paddingHorizontal: SIZES.padding, paddingTop: 15, backgroundColor: COLORS.white, borderTopWidth: 1, borderTopColor: '#F1F5F9' },
     footerButtons: { flexDirection: 'row', gap: 15 },
-    submitBtn: { flex: 1, borderRadius: 16, overflow: 'hidden', ...SHADOWS.medium },
+    submitBtn: { flex: 1, borderRadius: 16, overflow: 'hidden' },
     submitGradient: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 16, borderRadius: 25, gap: 10 },
     submitText: { fontSize: 16, fontWeight: 'bold', color: COLORS.white },
     cancelBtn: { backgroundColor: '#F1F5F9', borderWidth: 1, borderColor: '#E2E8F0', alignItems: 'center', justifyContent: 'center', shadowOpacity: 0, elevation: 0 },

@@ -9,6 +9,7 @@ import {
     Keyboard,
     ToastAndroid,
     ActivityIndicator,
+    Animated,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { KeyboardAvoidingView, Platform } from 'react-native';
@@ -37,6 +38,12 @@ export default function AddFuelScreen({ navigation, route }: { navigation: any; 
     const [isVehicleDropdownOpen, setIsVehicleDropdownOpen] = useState(false);
     const [isKeyboardVisible, setIsKeyboardVisible] = useState(false);
     const [isSaving, setIsSaving] = useState(false);
+
+    const scrollY = React.useRef(new Animated.Value(0)).current;
+
+    useEffect(() => {
+        navigation.setParams({ scrollY } as any);
+    }, []);
 
     useEffect(() => {
         if (fuelLogToEdit) {
@@ -69,15 +76,19 @@ export default function AddFuelScreen({ navigation, route }: { navigation: any; 
 
     const handleCostChange = (cost: string) => {
         setTotalCost(cost);
-        if (pricePerLiter && cost && parseFloat(pricePerLiter.replace(/,/g, '')) > 0) {
-            setLiters((parseFloat(cost.replace(/,/g, '')) / parseFloat(pricePerLiter.replace(/,/g, ''))).toFixed(2));
+        const costVal = parseFloat(cost.replace(/,/g, ''));
+        const priceVal = parseFloat(pricePerLiter.replace(/,/g, ''));
+        if (!isNaN(costVal) && !isNaN(priceVal) && priceVal > 0) {
+            setLiters((costVal / priceVal).toFixed(4));
         }
     };
 
     const handlePriceChange = (price: string) => {
         setPricePerLiter(price);
-        if (totalCost && price && parseFloat(price.replace(/,/g, '')) > 0) {
-            setLiters((parseFloat(totalCost.replace(/,/g, '')) / parseFloat(price.replace(/,/g, ''))).toFixed(2));
+        const priceVal = parseFloat(price.replace(/,/g, ''));
+        const costVal = parseFloat(totalCost.replace(/,/g, ''));
+        if (!isNaN(priceVal) && !isNaN(costVal) && priceVal > 0) {
+            setLiters((costVal / priceVal).toFixed(4));
         }
     };
 
@@ -166,7 +177,15 @@ export default function AddFuelScreen({ navigation, route }: { navigation: any; 
         >
             <View style={styles.container}>
 
-                <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+                <Animated.ScrollView
+                    contentContainerStyle={styles.content}
+                    showsVerticalScrollIndicator={false}
+                    onScroll={Animated.event(
+                        [{ nativeEvent: { contentOffset: { y: scrollY } } }],
+                        { useNativeDriver: false }
+                    )}
+                    scrollEventThrottle={16}
+                >
                     {/* Vehicle Selector */}
                     <View style={styles.inputGroup}>
                         <Text style={styles.label}>
@@ -316,7 +335,7 @@ export default function AddFuelScreen({ navigation, route }: { navigation: any; 
                     </View>
 
                     <View style={{ height: 120 }} />
-                </ScrollView>
+                </Animated.ScrollView>
 
                 {/* Sticky Footer */}
                 {!isKeyboardVisible && (
@@ -366,9 +385,9 @@ const styles = StyleSheet.create({
     fullTankCard: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: COLORS.white, padding: 14, borderRadius: 12, borderWidth: 1, borderColor: '#e2e8f0' },
     dateDisplay: { flexDirection: 'row', alignItems: 'center', backgroundColor: COLORS.white, padding: 14, borderRadius: 12, borderWidth: 1, borderColor: '#e2e8f0', gap: 10 },
     dateText: { fontSize: 15, color: COLORS.text, fontWeight: '500' },
-    footer: { position: 'absolute', bottom: 0, left: 0, right: 0, paddingHorizontal: SIZES.padding, paddingTop: 15, backgroundColor: COLORS.white, borderTopWidth: 1, borderTopColor: '#F1F5F9', ...SHADOWS.medium },
+    footer: { position: 'absolute', bottom: 0, left: 0, right: 0, paddingHorizontal: SIZES.padding, paddingTop: 15, backgroundColor: COLORS.white, borderTopWidth: 1, borderTopColor: '#F1F5F9' },
     footerButtons: { flexDirection: 'row', gap: 15 },
-    submitBtn: { flex: 1, borderRadius: 16, overflow: 'hidden', ...SHADOWS.medium },
+    submitBtn: { flex: 1, borderRadius: 16, overflow: 'hidden' },
     submitGradient: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 16, borderRadius: 25, gap: 10 },
     submitText: { fontSize: 16, fontWeight: 'bold', color: COLORS.white },
     cancelBtn: { backgroundColor: '#F1F5F9', borderWidth: 1, borderColor: '#E2E8F0', alignItems: 'center', justifyContent: 'center', shadowOpacity: 0, elevation: 0 },

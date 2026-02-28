@@ -8,6 +8,7 @@ import {
     SafeAreaView,
     ActivityIndicator,
     RefreshControl,
+    Animated,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -33,6 +34,11 @@ export default function VehicleLogsScreen({ navigation, route }: any) {
     const [logs, setLogs] = useState<LogEntry[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
+    const scrollY = React.useRef(new Animated.Value(0)).current;
+
+    React.useEffect(() => {
+        navigation.setParams({ scrollY } as any);
+    }, []);
 
     const fetchLogs = useCallback(async () => {
         if (!vehicle?.id) return;
@@ -163,10 +169,15 @@ export default function VehicleLogsScreen({ navigation, route }: any) {
             </View>
 
             {/* Logs List */}
-            <ScrollView
+            <Animated.ScrollView
                 style={styles.logsList}
                 contentContainerStyle={styles.logsListContent}
                 showsVerticalScrollIndicator={false}
+                onScroll={Animated.event(
+                    [{ nativeEvent: { contentOffset: { y: scrollY } } }],
+                    { useNativeDriver: false }
+                )}
+                scrollEventThrottle={16}
                 refreshControl={
                     <RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={[COLORS.primary]} />
                 }
@@ -200,7 +211,7 @@ export default function VehicleLogsScreen({ navigation, route }: any) {
                 ) : (
                     filteredLogs.map((log, index) => renderLogItem(log, index))
                 )}
-            </ScrollView>
+            </Animated.ScrollView>
 
 
         </SafeAreaView>

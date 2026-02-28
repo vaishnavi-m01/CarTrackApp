@@ -5,7 +5,7 @@ import {
     StyleSheet,
     TouchableOpacity,
     Modal,
-    ScrollView,
+    FlatList,
     ActivityIndicator,
     Image,
     Dimensions,
@@ -13,13 +13,16 @@ import {
     PanResponder,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useNavigation } from '@react-navigation/native';
 import { COLORS, SIZES, SHADOWS } from '../constants/theme';
 import apiClient from '../api/apiClient';
+import { useAuth } from '../context/AuthContext';
 
 interface LikersBottomSheetProps {
     visible: boolean;
     onClose: () => void;
     postId: string | number | null;
+    onUserPress?: (userId: string, userName: string) => void;
 }
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
@@ -29,7 +32,10 @@ export default function LikersBottomSheet({
     visible,
     onClose,
     postId,
+    onUserPress,
 }: LikersBottomSheetProps) {
+    const { user: currentUser, followUser } = useAuth();
+    const navigation = useNavigation<any>();
     const [likers, setLikers] = useState<any[]>([]);
     const [isLoading, setIsLoading] = useState(false);
 
@@ -94,6 +100,20 @@ export default function LikersBottomSheet({
         closeBottomSheet.start(onClose);
     };
 
+    const handleFollowPress = async (userId: string | number) => {
+        try {
+            await followUser(userId.toString());
+            // Optionally refresh likers or just rely on global auth state
+        } catch (error) {
+            console.error('Error following in likers sheet:', error);
+        }
+    };
+
+    const handleMessagePress = (userId: string, userName: string) => {
+        handleClose();
+        navigation.navigate('ChatDetail', { userId, userName });
+    };
+
     return (
         <Modal
             visible={visible}
@@ -127,44 +147,73 @@ export default function LikersBottomSheet({
                         </TouchableOpacity>
                     </View>
 
-                    <ScrollView
-                        style={styles.likersList}
-                        contentContainerStyle={styles.listContent}
-                        showsVerticalScrollIndicator={false}
-                    >
-                        {isLoading ? (
-                            <View style={styles.loadingContainer}>
-                                <ActivityIndicator size="large" color={COLORS.primary} />
-                            </View>
-                        ) : likers.length === 0 ? (
-                            <View style={styles.emptyState}>
-                                <Text style={styles.emptyText}>No likes yet</Text>
-                            </View>
-                        ) : (
-                            likers.map((user) => (
-                                <View key={user.id} style={styles.userItem}>
-                                    <View style={styles.userInfo}>
-                                        <View style={styles.avatarContainer}>
-                                            {user.profilePicUrl ? (
-                                                <Image source={{ uri: user.profilePicUrl }} style={styles.avatar} />
-                                            ) : (
-                                                <Text style={styles.avatarText}>
-                                                    {user.username?.charAt(0).toUpperCase() || '?'}
-                                                </Text>
-                                            )}
-                                        </View>
-                                        <View>
-                                            <Text style={styles.username}>{user.username}</Text>
-                                            <Text style={styles.fullName}>{user.fullName || user.email}</Text>
-                                        </View>
-                                    </View>
-                                    <TouchableOpacity style={styles.followBtn}>
-                                        <Text style={styles.followBtnText}>Follow</Text>
-                                    </TouchableOpacity>
+                    {isLoading ? (
+                        <View style={styles.loadingContainer}>
+                            <ActivityIndicator size="large" color={COLORS.primary} />
+                        </View>
+                    ) : (
+                        <FlatList
+                            data={likers}
+                            keyExtractor={(item) => item.id.toString()}
+                            showsVerticalScrollIndicator={false}
+                            contentContainerStyle={styles.listContent}
+                            ListEmptyComponent={() => (
+                                <View style={styles.emptyState}>
+                                    <Text style={styles.emptyText}>No likes yet</Text>
                                 </View>
-                            ))
-                        )}
-                    </ScrollView>
+                            )}
+                            renderItem={({ item: liker }) => {
+                                const isCurrentUser = currentUser?.id?.toString() === liker.id?.toString();
+                                const isFollowing = currentUser?.following?.includes(liker.id?.toString());
+
+                                return (
+                                    <View style={styles.userItem}>
+                                        <TouchableOpacity
+                                            style={styles.userInfo}
+                                            onPress={() => {
+                                                handleClose();
+                                                onUserPress?.(liker.id.toString(), liker.username);
+                                            }}
+                                        >
+                                            <View style={styles.avatarContainer}>
+                                                {liker.profilePicUrl ? (
+                                                    <Image source={{ uri: liker.profilePicUrl }} style={styles.avatar} />
+                                                ) : (
+                                                    <Text style={styles.avatarText}>
+                                                        {liker.username?.charAt(0).toUpperCase() || '?'}
+                                                    </Text>
+                                                )}
+                                            </View>
+                                            <View>
+                                                <Text style={styles.username}>{liker.username}</Text>
+                                                <Text style={styles.emailText}>{liker.email}</Text>
+                                            </View>
+                                        </TouchableOpacity>
+
+                                        {!isCurrentUser && (
+                                            <TouchableOpacity
+                                                style={[
+                                                    styles.actionBtn,
+                                                    isFollowing && styles.messageBtn
+                                                ]}
+                                                onPress={() => isFollowing
+                                                    ? handleMessagePress(liker.id.toString(), liker.username)
+                                                    : handleFollowPress(liker.id)
+                                                }
+                                            >
+                                                <Text style={[
+                                                    styles.actionBtnText,
+                                                    isFollowing && styles.messageBtnText
+                                                ]}>
+                                                    {isFollowing ? 'Message' : 'Follow'}
+                                                </Text>
+                                            </TouchableOpacity>
+                                        )}
+                                    </View>
+                                );
+                            }}
+                        />
+                    )}
                 </Animated.View>
             </View>
         </Modal>
@@ -254,21 +303,31 @@ const styles = StyleSheet.create({
         fontWeight: 'bold',
         color: COLORS.text,
     },
-    fullName: {
+    emailText: {
         fontSize: 13,
         color: COLORS.textLight,
         marginTop: 1,
     },
-    followBtn: {
+    actionBtn: {
         backgroundColor: COLORS.primary,
         paddingHorizontal: 16,
-        paddingVertical: 6,
-        borderRadius: 8,
+        paddingVertical: 8,
+        borderRadius: 10,
+        minWidth: 85,
+        alignItems: 'center',
     },
-    followBtnText: {
+    messageBtn: {
+        backgroundColor: 'transparent',
+        borderWidth: 1.5,
+        borderColor: COLORS.primary,
+    },
+    actionBtnText: {
         color: COLORS.white,
-        fontSize: 14,
-        fontWeight: '600',
+        fontSize: 13,
+        fontWeight: 'bold',
+    },
+    messageBtnText: {
+        color: COLORS.primary,
     },
     loadingContainer: {
         paddingVertical: 40,

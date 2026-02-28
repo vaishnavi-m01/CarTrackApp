@@ -12,37 +12,13 @@ import {
 import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
 import { Ionicons } from '@expo/vector-icons';
+import { Animated } from 'react-native';
 import { COLORS, SIZES, SHADOWS } from '../constants/theme';
 import { Car } from '../constants/cars';
 
-export default function ComparisonScreen({ route }: { navigation: any; route: any }) {
+export default function ComparisonScreen({ navigation, route }: { navigation: any; route: any }) {
     const cars: Car[] = route?.params?.cars || [
-        {
-            id: '1',
-            brand: 'BMW',
-            model: 'M3 Competition',
-            price: '₹75.5 Lakh',
-            image: 'https://images.unsplash.com/photo-1555215695-3004980ad54e?auto=format&fit=crop&q=80&w=800',
-            specs: { power: '503 HP', engine: '3.0L Twin-Turbo', topSpeed: '290 km/h' },
-            type: 'CAR',
-            year: '2024',
-            priceNumeric: 75.5,
-            emi: '₹1.5L/month'
-        },
-        {
-            id: '2',
-            brand: 'Audi',
-            model: 'Q7 Luxury',
-            price: '₹88.6 Lakh',
-            image: 'https://images.unsplash.com/photo-1567818738068-3003c41db81e?auto=format&fit=crop&q=80&w=400',
-            specs: { power: '340 HP', engine: '3.0L TFSI', topSpeed: '250 km/h' },
-            type: 'CAR',
-            year: '2024',
-            priceNumeric: 88.6,
-            emi: '₹1.8L/month'
-        },
-    ];
-
+    ""]
     const comparisonData = [
         { label: 'Model', key: 'model' },
         { label: 'Year', key: 'year' },
@@ -60,6 +36,11 @@ export default function ComparisonScreen({ route }: { navigation: any; route: an
     ];
 
     const [isExporting, setIsExporting] = React.useState(false);
+    const scrollY = React.useRef(new Animated.Value(0)).current;
+
+    React.useEffect(() => {
+        navigation.setParams({ scrollY, handleExport: handleExportPDF } as any);
+    }, [isExporting]);
 
     const handleExportPDF = async () => {
         setIsExporting(true);
@@ -150,25 +131,15 @@ export default function ComparisonScreen({ route }: { navigation: any; route: an
 
     return (
         <View style={styles.container}>
-            <View style={styles.header}>
-                <Text style={styles.headerTitle}>Comparison</Text>
-                <TouchableOpacity
-                    style={styles.exportButton}
-                    onPress={handleExportPDF}
-                    disabled={isExporting}
-                >
-                    {isExporting ? (
-                        <ActivityIndicator size="small" color={COLORS.primary} />
-                    ) : (
-                        <View style={styles.exportContent}>
-                            <Ionicons name="download-outline" size={18} color={COLORS.primary} />
-                            <Text style={styles.exportText}>PDF</Text>
-                        </View>
-                    )}
-                </TouchableOpacity>
-            </View>
 
-            <ScrollView contentContainerStyle={styles.content}>
+            <Animated.ScrollView
+                contentContainerStyle={styles.content}
+                onScroll={Animated.event(
+                    [{ nativeEvent: { contentOffset: { y: scrollY } } }],
+                    { useNativeDriver: false }
+                )}
+                scrollEventThrottle={16}
+            >
                 <View style={styles.carsHeader}>
                     {cars.map((car) => (
                         <View key={car.id} style={styles.carColumn}>
@@ -204,7 +175,7 @@ export default function ComparisonScreen({ route }: { navigation: any; route: an
                 <Text style={styles.note}>
                     💡 Tap on any car to view detailed specifications, photos, and videos
                 </Text>
-            </ScrollView>
+            </Animated.ScrollView>
         </View>
     );
 }

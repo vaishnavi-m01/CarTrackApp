@@ -10,10 +10,12 @@ import {
     Modal,
     RefreshControl,
     Image,
+    Animated,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { COLORS, SIZES, SHADOWS } from '../constants/theme';
 import Header from '../components/Header';
 import VehicleCard from '../components/VehicleCard';
@@ -33,12 +35,14 @@ interface HomeScreenProps {
 export default function HomeScreen({ navigation }: HomeScreenProps) {
     const { user } = useAuth();
     const [searchQuery, setSearchQuery] = useState('');
-    const { vehicles, savedNewsIds, toggleSavedNews, fetchVehicles, isLoading: isAppLoading, AndroidToast } = useApp();
+    const { vehicles, savedNewsIds, toggleSavedNews, fetchVehicles, isLoading: isAppLoading, AndroidToast, systemUnreadCount } = useApp();
     const [selectedVehicleId, setSelectedVehicleId] = useState<string | null>(null);
     const [isVehicleModalVisible, setVehicleModalVisible] = useState(false);
     const [refreshing, setRefreshing] = useState(false);
     const [latestNews, setLatestNews] = useState<any[]>([]);
     const [suggestedUsers, setSuggestedUsers] = useState<any[]>([]);
+    const [serviceStat, setServiceStat] = useState<{ label: string; urgent: boolean } | null>(null);
+    const [insuranceStat, setInsuranceStat] = useState<{ label: string; urgent: boolean } | null>(null);
 
     // Fetch latest news on mount
     React.useEffect(() => {
@@ -46,13 +50,34 @@ export default function HomeScreen({ navigation }: HomeScreenProps) {
         fetchSuggestions();
     }, [user?.id]);
 
+    // Refresh vehicles every time the screen is focused
+    useFocusEffect(
+        React.useCallback(() => {
+            fetchVehicles();
+        }, [])
+    );
+
     const fetchSuggestions = async () => {
         if (!user) return;
         try {
             const response = await apiClient.get(`/users/${user.id}/suggestions`);
-            setSuggestedUsers(response.data || []);
+            let users = response.data?.filter((u: any) => u.roleId === 2) || [];
+
+            if (users.length === 0) {
+                // Fallback data if API returns empty
+                users = [
+                    { id: 991, username: 'car_enthusiast', profilePicUrl: 'https://ui-avatars.com/api/?name=Car+Enthusiast&background=random', roleId: 2 },
+                    { id: 992, username: 'speed_demon', profilePicUrl: 'https://ui-avatars.com/api/?name=Speed+Demon&background=random', roleId: 2 },
+                    { id: 993, username: 'vintage_collector', profilePicUrl: 'https://ui-avatars.com/api/?name=Vintage+Collector&background=random', roleId: 2 }
+                ];
+            }
+            setSuggestedUsers(users);
         } catch (error) {
             console.error('Error fetching suggestions for home screen:', error);
+            setSuggestedUsers([
+                { id: 991, username: 'car_enthusiast', profilePicUrl: 'https://ui-avatars.com/api/?name=Car+Enthusiast&background=random', roleId: 2 },
+                { id: 992, username: 'speed_demon', profilePicUrl: 'https://ui-avatars.com/api/?name=Speed+Demon&background=random', roleId: 2 },
+            ]);
         }
     };
 
@@ -74,16 +99,79 @@ export default function HomeScreen({ navigation }: HomeScreenProps) {
         }
     }, [vehicles, selectedVehicleId]);
 
-    const selectedVehicle = vehicles.length > 0 ? (vehicles.find(v => v.id === selectedVehicleId) || vehicles[0]) : null;
+    // Fetch real-time service and insurance stats when vehicle changes
+    React.useEffect(() => {
+        if (selectedVehicleId) {
+            fetchServiceStat(selectedVehicleId);
+            fetchInsuranceStat(selectedVehicleId);
+        }
+    }, [selectedVehicleId]);
 
-    // Dynamic Mock Data based on selected vehicle
-    const getDaysRemaining = (id: string, seed: number) => {
-        const hash = id.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
-        return (hash % seed) + 5; // Variation between 5 and seed+5
+    // Parse "yyyy-MM-dd" as LOCAL date (avoids UTC timezone shift from new Date("yyyy-MM-dd"))
+    const getDaysFromNow = (dateStr: string): number => {
+        const parts = dateStr.split('-'); // ["2026", "02", "28"]
+        const year = parseInt(parts[0], 10);
+        const month = parseInt(parts[1], 10) - 1; // month is 0-indexed
+        const day = parseInt(parts[2], 10);
+        const target = new Date(year, month, day); // local midnight, no UTC shift
+        const today = new Date();
+        today.setHours(0, 0, 0, 0); // compare date only, not time
+        return Math.ceil((target.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
     };
 
-    const serviceDays = selectedVehicle ? getDaysRemaining(selectedVehicle.id, 25) : 15;
-    const insuranceDays = selectedVehicle ? getDaysRemaining(selectedVehicle.id, 60) : 45;
+    const fetchServiceStat = async (vehicleId: string) => {
+        try {
+            const res = await apiClient.get(`/services/upcoming/${vehicleId}`);
+            const data = res.data;
+            if (data?.targetDate) {
+                const days = getDaysFromNow(data.targetDate);
+                if (days <= 0) {
+                    setServiceStat({ label: 'Overdue!', urgent: true });
+                } else {
+                    setServiceStat({ label: `${days} Days`, urgent: days <= 7 });
+                }
+            } else {
+                setServiceStat({ label: 'N/A', urgent: false });
+            }
+        } catch {
+            setServiceStat({ label: 'N/A', urgent: false });
+        }
+    };
+
+    const fetchInsuranceStat = async (vehicleId: string) => {
+        try {
+            const res = await apiClient.get(`/insurance?vehicleId=${vehicleId}`);
+            const insurances: any[] = res.data || [];
+            console.log('🛡️ Insurance API response:', JSON.stringify(insurances));
+            // Case-insensitive status check to handle enum variations
+            const active = insurances
+                .filter((i: any) => i.expiryDate && String(i.status).toUpperCase() === 'ACTIVE')
+                .sort((a: any, b: any) => {
+                    const dateA = a.expiryDate.split('-');
+                    const dateB = b.expiryDate.split('-');
+                    const dA = new Date(+dateA[0], +dateA[1] - 1, +dateA[2]).getTime();
+                    const dB = new Date(+dateB[0], +dateB[1] - 1, +dateB[2]).getTime();
+                    return dA - dB; // nearest first
+                });
+            console.log('🛡️ Filtered active insurances:', active.length, active[0]?.expiryDate);
+            if (active.length > 0) {
+                const days = getDaysFromNow(active[0].expiryDate);
+                console.log('🛡️ Days remaining:', days);
+                if (days <= 0) {
+                    setInsuranceStat({ label: 'Expired!', urgent: true });
+                } else {
+                    setInsuranceStat({ label: `${days} Days`, urgent: days <= 15 });
+                }
+            } else {
+                setInsuranceStat({ label: 'N/A', urgent: false });
+            }
+        } catch (err) {
+            console.error('🛡️ Insurance fetch error:', err);
+            setInsuranceStat({ label: 'N/A', urgent: false });
+        }
+    };
+
+    const selectedVehicle = vehicles.length > 0 ? (vehicles.find(v => v.id === selectedVehicleId) || vehicles[0]) : null;
 
     // Dynamic Loan Estimations for Home Screen Banner
     const loanPrincipal = selectedVehicle?.purchasePrice ? parseFloat(selectedVehicle.purchasePrice.replace(/,/g, '')) : 1000000;
@@ -95,15 +183,27 @@ export default function HomeScreen({ navigation }: HomeScreenProps) {
     const formattedEmi = new Intl.NumberFormat('en-IN', { maximumFractionDigits: 0 }).format(Math.round(estimatedEmi));
 
     const stats = [
-        { icon: '📅', label: 'Next Service', value: `${serviceDays} Days`, subtext: selectedVehicle?.model || 'General' },
-        { icon: '🛡️', label: 'Insurance', value: `${insuranceDays} Days`, subtext: 'Expires Soon' },
+        {
+            icon: '📅',
+            label: 'Next Service',
+            value: serviceStat?.label ?? '...',
+            subtext: selectedVehicle?.model || 'General',
+            urgent: serviceStat?.urgent ?? false,
+        },
+        {
+            icon: '🛡️',
+            label: 'Insurance',
+            value: insuranceStat?.label ?? '...',
+            subtext: 'Expiry',
+            urgent: insuranceStat?.urgent ?? false,
+        },
     ];
 
     const quickActions = [
         { icon: 'water', label: 'Add Fuel', color: COLORS.primary },
+        { icon: 'car-sport', label: 'Add Vehicle', color: COLORS.primary },
         { icon: 'wallet', label: 'Expenses', color: COLORS.primary },
         { icon: 'build', label: 'Service', color: COLORS.primary },
-        { icon: 'stats-chart', label: 'Reports', color: COLORS.primary },
         { icon: 'document-text', label: 'Documents', color: COLORS.primary },
         { icon: 'cart', label: 'Market', color: COLORS.primary },
         { icon: 'map', label: 'Trips', color: COLORS.primary },
@@ -118,7 +218,10 @@ export default function HomeScreen({ navigation }: HomeScreenProps) {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
         switch (label) {
             case 'Add Fuel':
-                navigation.navigate('AddFuel');
+                navigation.navigate('AddFuel', { vehicleId: selectedVehicle?.id });
+                break;
+            case 'Add Vehicle':
+                navigation.navigate('AddVehicle');
                 break;
             case 'Expenses':
                 navigation.navigate('Expenses');
@@ -172,6 +275,20 @@ export default function HomeScreen({ navigation }: HomeScreenProps) {
         }
     };
 
+    // Filter content
+    const filteredVehicles = (vehicles || []).filter(v => {
+        return true; // Search query logic removed
+    });
+
+    const filteredNews = (latestNews || []);
+
+    const filteredSuggestions = (suggestedUsers || []).filter(s => {
+        // Only show regular users (roleId 2), exclude admins or other roles
+        return s.roleId === 2;
+    });
+
+    const scrollY = React.useRef(new Animated.Value(0)).current;
+
     return (
         <View style={styles.container}>
             {/* Header */}
@@ -179,31 +296,24 @@ export default function HomeScreen({ navigation }: HomeScreenProps) {
                 title='CarTrack Pro'
                 logoImage={require('../assets/motorideLogo.png')}
                 subtitle={selectedVehicle ? `Managing ${selectedVehicle.brand} ${selectedVehicle.model}` : "Welcome back,"}
-                notificationCount={5}
+                notificationCount={systemUnreadCount}
                 onNotificationPress={handleNotification}
+                scrollY={scrollY}
             />
 
-            <ScrollView
+            <Animated.ScrollView
                 showsVerticalScrollIndicator={false}
                 style={styles.content}
                 contentContainerStyle={{ paddingBottom: 10 }}
+                onScroll={Animated.event(
+                    [{ nativeEvent: { contentOffset: { y: scrollY } } }],
+                    { useNativeDriver: false }
+                )}
+                scrollEventThrottle={16}
                 refreshControl={
                     <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.primary} />
                 }
             >
-                {/* Search Bar */}
-                <View style={styles.searchContainer}>
-                    <View style={styles.searchBar}>
-                        <Ionicons name="search" size={20} color={COLORS.gray} />
-                        <TextInput
-                            style={styles.searchInput}
-                            placeholder="Search cars, brands, news..."
-                            placeholderTextColor={COLORS.textExtraLight}
-                            value={searchQuery}
-                            onChangeText={setSearchQuery}
-                        />
-                    </View>
-                </View>
 
                 <View style={[styles.section, { marginTop: 5 }]}>
                     <View style={styles.sectionHeader}>
@@ -230,31 +340,35 @@ export default function HomeScreen({ navigation }: HomeScreenProps) {
                         </View>
                     </View>
 
-                    {selectedVehicle ? (
+                    {filteredVehicles.length > 0 ? (
                         <View>
                             <VehicleCard
-                                vehicle={selectedVehicle!}
+                                vehicle={filteredVehicles[0]}
                                 isActive={true}
-                                onPress={() => navigation.navigate('VehicleDetails', { vehicle: selectedVehicle })}
+                                onPress={() => navigation.navigate('VehicleDetails', { vehicle: filteredVehicles[0] })}
                             />
                             {/* Service & Insurance Indicators */}
                             <View style={styles.indicatorsContainer}>
                                 <View style={styles.indicatorCard}>
-                                    <View style={[styles.indicatorIcon, { backgroundColor: '#FFEDD5' }]}>
-                                        <Ionicons name="construct" size={18} color="#D97706" />
+                                    <View style={[styles.indicatorIcon, { backgroundColor: serviceStat?.urgent ? '#FEF3C7' : '#FFEDD5' }]}>
+                                        <Ionicons name="construct" size={18} color={serviceStat?.urgent ? '#D97706' : '#D97706'} />
                                     </View>
                                     <View>
                                         <Text style={styles.indicatorLabel}>Next Service</Text>
-                                        <Text style={styles.indicatorValue}>{serviceDays} Days Left</Text>
+                                        <Text style={[styles.indicatorValue, serviceStat?.urgent && { color: '#D97706', fontWeight: '700' }]}>
+                                            {serviceStat?.label ?? '...'}
+                                        </Text>
                                     </View>
                                 </View>
                                 <View style={styles.indicatorCard}>
-                                    <View style={[styles.indicatorIcon, { backgroundColor: '#FEE2E2' }]}>
-                                        <Ionicons name="shield-checkmark" size={18} color="#DC2626" />
+                                    <View style={[styles.indicatorIcon, { backgroundColor: insuranceStat?.urgent ? '#FEE2E2' : '#FEE2E2' }]}>
+                                        <Ionicons name="shield-checkmark" size={18} color={insuranceStat?.urgent ? '#DC2626' : '#DC2626'} />
                                     </View>
                                     <View>
                                         <Text style={styles.indicatorLabel}>Insurance</Text>
-                                        <Text style={styles.indicatorValue}>{insuranceDays} Days Left</Text>
+                                        <Text style={[styles.indicatorValue, insuranceStat?.urgent && { color: '#DC2626', fontWeight: '700' }]}>
+                                            {insuranceStat?.label ?? '...'}
+                                        </Text>
                                     </View>
                                 </View>
                             </View>
@@ -311,12 +425,12 @@ export default function HomeScreen({ navigation }: HomeScreenProps) {
                     <View style={styles.suggestionsSection}>
                         <View style={styles.suggestionsHeader}>
                             <Text style={styles.sectionTitle}>Suggested for You</Text>
-                            <TouchableOpacity>
+                            <TouchableOpacity onPress={() => navigation.navigate('DiscoverPeople')}>
                                 <Text style={styles.viewAll}>See All →</Text>
                             </TouchableOpacity>
                         </View>
                         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.suggestionsList}>
-                            {suggestedUsers.map((sUser) => (
+                            {filteredSuggestions.map((sUser) => (
                                 <View key={sUser.id} style={styles.suggestionCard}>
                                     <TouchableOpacity
                                         style={styles.suggestionDismissBtn}
@@ -329,7 +443,7 @@ export default function HomeScreen({ navigation }: HomeScreenProps) {
                                         onPress={() => (navigation as any).navigate('OtherUserProfile', { userId: sUser.id, userName: sUser.username || sUser.name || 'User' })}
                                     >
                                         <Image
-                                            source={{ uri: sUser.profilePicUrl || `https://ui-avatars.com/api/?name=${sUser.username || sUser.name || 'User'}&background=3B82F6&color=fff&size=128` }}
+                                            source={sUser.profilePicUrl ? { uri: sUser.profilePicUrl } : COLORS.defaultProfileImage}
                                             style={styles.suggestionAvatar}
                                         />
                                     </TouchableOpacity>
@@ -422,7 +536,7 @@ export default function HomeScreen({ navigation }: HomeScreenProps) {
                                 <Text style={styles.viewAll}>View All →</Text>
                             </TouchableOpacity>
                         </View>
-                        {latestNews.map((news) => (
+                        {filteredNews.map((news) => (
                             <NewsCard
                                 key={news.id}
                                 news={{ ...news, id: news.id }}
@@ -435,7 +549,7 @@ export default function HomeScreen({ navigation }: HomeScreenProps) {
                 )}
 
                 <View style={{ height: 20 }} />
-            </ScrollView>
+            </Animated.ScrollView>
 
             {/* Vehicle Selection Modal */}
             <Modal

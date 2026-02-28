@@ -9,6 +9,7 @@ import {
     Modal,
     ActivityIndicator,
     Alert,
+    Animated,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -40,6 +41,12 @@ export default function ServiceRecordsScreen({ navigation, route }: { navigation
     const [isModalVisible, setModalVisible] = useState(false);
     const [serviceRecords, setServiceRecords] = useState<ServiceRecord[]>([]);
     const [isLoading, setIsLoading] = useState(true);
+
+    const scrollY = React.useRef(new Animated.Value(0)).current;
+
+    useEffect(() => {
+        navigation.setParams({ scrollY });
+    }, []);
 
     const fetchServiceRecords = async () => {
         if (!vehicle?.id) return;
@@ -142,7 +149,15 @@ export default function ServiceRecordsScreen({ navigation, route }: { navigation
 
     return (
         <View style={styles.container}>
-            <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+            <Animated.ScrollView
+                contentContainerStyle={styles.content}
+                showsVerticalScrollIndicator={false}
+                onScroll={Animated.event(
+                    [{ nativeEvent: { contentOffset: { y: scrollY } } }],
+                    { useNativeDriver: false }
+                )}
+                scrollEventThrottle={16}
+            >
 
                 {/* Summary Header Card */}
 
@@ -244,7 +259,7 @@ export default function ServiceRecordsScreen({ navigation, route }: { navigation
                 )}
 
                 <View style={{ height: 120 }} />
-            </ScrollView>
+            </Animated.ScrollView>
 
             {/* Record Details Modal */}
             <Modal

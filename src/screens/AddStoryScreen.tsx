@@ -41,6 +41,12 @@ export default function AddStoryScreen({ navigation }: AddStoryScreenProps) {
     const [isPosting, setIsPosting] = useState(false);
     const { user } = useAuth();
 
+    const scrollY = useRef(new Animated.Value(0)).current;
+
+    React.useEffect(() => {
+        navigation.setParams({ scrollY } as any);
+    }, []);
+
     // Caption positioning
     // Initial position: Bottom Left (approx -120, 250 from center)
     const pan = useRef(new Animated.ValueXY({ x: -120, y: 250 })).current;

@@ -9,6 +9,10 @@ import { AuthProvider } from './src/context/AuthContext';
 
 import * as Linking from 'expo-linking';
 
+import { NotificationHandler } from './src/components/NotificationHandler';
+
+import { navigationRef } from './src/navigation/NavigationService';
+
 export default function App() {
   const prefix = Linking.createURL('/');
 
@@ -18,6 +22,7 @@ export default function App() {
       screens: {
         VehicleDetails: 'vehicle/:id',
         VehicleSpec: 'spec/:id',
+        StoryViewer: 'story/:storyId',
         MainTabs: {
           path: 'tabs',
           screens: {
@@ -33,10 +38,12 @@ export default function App() {
     <AuthProvider>
       <AppProvider>
         <SafeAreaProvider>
-          <StatusBar style="light" />
-          <NavigationContainer linking={linking}>
-            <MainNavigator />
-          </NavigationContainer>
+          <NotificationHandler>
+            <StatusBar style="light" />
+            <NavigationContainer ref={navigationRef} linking={linking}>
+              <MainNavigator />
+            </NavigationContainer>
+          </NotificationHandler>
         </SafeAreaProvider>
       </AppProvider>
     </AuthProvider>

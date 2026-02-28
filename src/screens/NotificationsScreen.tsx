@@ -143,9 +143,9 @@ export default function NotificationsScreen() {
                             !notification.isRead && styles.notificationItemUnread,
                         ]}
                     >
-                        {notification.userImage ? (
+                        {notification.userImage || (['like', 'comment', 'follow'].includes(notification.type)) ? (
                             <Image
-                                source={{ uri: notification.userImage }}
+                                source={notification.userImage ? { uri: notification.userImage } : COLORS.defaultProfileImage}
                                 style={styles.userAvatar}
                             />
                         ) : (

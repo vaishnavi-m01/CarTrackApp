@@ -7,6 +7,7 @@ import {
     StyleSheet,
     ActivityIndicator,
     RefreshControl,
+    Animated,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
@@ -26,6 +27,12 @@ export default function NewsScreen() {
     const [categories, setCategories] = useState<NewsCategory[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [isRefreshing, setIsRefreshing] = useState(false);
+
+    const scrollY = React.useRef(new Animated.Value(0)).current;
+
+    useEffect(() => {
+        navigation.setParams({ scrollY } as any);
+    }, []);
 
     // Initial load: Fetch categories only
     useEffect(() => {
@@ -125,9 +132,14 @@ export default function NewsScreen() {
             </View>
 
             {/* News List */}
-            <ScrollView
+            <Animated.ScrollView
                 showsVerticalScrollIndicator={false}
                 contentContainerStyle={styles.newsList}
+                onScroll={Animated.event(
+                    [{ nativeEvent: { contentOffset: { y: scrollY } } }],
+                    { useNativeDriver: false }
+                )}
+                scrollEventThrottle={16}
                 refreshControl={
                     <RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} />
                 }
@@ -150,7 +162,7 @@ export default function NewsScreen() {
                         <Text style={styles.emptyText}>No news highlights available for this category</Text>
                     </View>
                 )}
-            </ScrollView>
+            </Animated.ScrollView>
         </View>
     );
 }

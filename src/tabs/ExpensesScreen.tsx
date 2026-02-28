@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import {
     View,
     Text,
@@ -6,6 +6,9 @@ import {
     TouchableOpacity,
     StyleSheet,
     ActivityIndicator,
+    Animated,
+    TextInput,
+    Platform,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
@@ -14,7 +17,10 @@ import { useNavigation } from '@react-navigation/native';
 import { StackNavigationProp } from '@react-navigation/stack';
 import { RootStackParamList } from '../navigation/MainNavigator';
 import { useBottomTabBarHeight } from '@react-navigation/bottom-tabs';
+import { useFocusEffect } from '@react-navigation/native';
 import DateTimePicker from '@react-native-community/datetimepicker';
+import Header from '../components/Header';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 
 import { useApp } from '../context/AppContext';
@@ -38,42 +44,47 @@ export default function ExpensesScreen() {
     const [showStartPicker, setShowStartPicker] = useState(false);
     const [showEndPicker, setShowEndPicker] = useState(false);
 
+    // Search states
+    const [searchActive, setSearchActive] = useState(false);
+    const [searchQuery, setSearchQuery] = useState('');
+
     // Fetch data when vehicle or period changes
-    // Fetch data when vehicle or period changes
-    useEffect(() => {
-        const getDates = () => {
-            const now = new Date();
-            let start = new Date(now);
-            const endDate = now.toISOString().split('T')[0];
+    useFocusEffect(
+        React.useCallback(() => {
+            const getDates = () => {
+                const now = new Date();
+                let start = new Date(now);
+                const endDate = now.toISOString().split('T')[0];
 
-            if (selectedPeriod === 'Week') {
-                // Sunday as start of week
-                const day = now.getDay(); // 0 is Sunday
-                start.setDate(now.getDate() - day);
-            } else if (selectedPeriod === 'Month') {
-                start.setDate(1);
-            } else if (selectedPeriod === 'Year') {
-                start.setMonth(0, 1);
-            } else if (selectedPeriod === 'Custom') {
-                return {
-                    startDate: customStartDate.toISOString().split('T')[0],
-                    endDate: customEndDate.toISOString().split('T')[0]
-                };
-            }
+                if (selectedPeriod === 'Week') {
+                    // Sunday as start of week
+                    const day = now.getDay(); // 0 is Sunday
+                    start.setDate(now.getDate() - day);
+                } else if (selectedPeriod === 'Month') {
+                    start.setDate(1);
+                } else if (selectedPeriod === 'Year') {
+                    start.setMonth(0, 1);
+                } else if (selectedPeriod === 'Custom') {
+                    return {
+                        startDate: customStartDate.toISOString().split('T')[0],
+                        endDate: customEndDate.toISOString().split('T')[0]
+                    };
+                }
 
-            const startDate = start.toISOString().split('T')[0];
-            setActiveDateRange({ start: startDate, end: endDate });
+                const startDate = start.toISOString().split('T')[0];
+                setActiveDateRange({ start: startDate, end: endDate });
 
-            return { startDate, endDate };
-        };
+                return { startDate, endDate };
+            };
 
-        const { startDate, endDate } = getDates();
-        fetchExpenses({
-            vehicleId: selectedVehicleId || undefined,
-            startDate,
-            endDate
-        });
-    }, [selectedVehicleId, selectedPeriod, customStartDate, customEndDate]);
+            const { startDate, endDate } = getDates();
+            fetchExpenses({
+                vehicleId: selectedVehicleId || undefined,
+                startDate,
+                endDate
+            });
+        }, [selectedVehicleId, selectedPeriod, customStartDate, customEndDate])
+    );
 
     const formatDateRange = () => {
         const options: Intl.DateTimeFormatOptions = { day: '2-digit', month: 'short', year: 'numeric' };
@@ -93,54 +104,115 @@ export default function ExpensesScreen() {
     };
 
     // Summary calculation
+    const filteredExpenses = useMemo(() => {
+        if (!searchQuery.trim()) return expenses;
+        const query = searchQuery.toLowerCase().trim();
+        return expenses.filter(e =>
+            (e.type || '').toLowerCase().includes(query) ||
+            (e.note || '').toLowerCase().includes(query) ||
+            (e.vehicleName || '').toLowerCase().includes(query)
+        );
+    }, [expenses, searchQuery]);
+
     const summary = useMemo(() => {
-        const total = expenses.reduce((sum, e) => sum + e.amount, 0);
-        const fuel = expenses.filter(e => e.type.toLowerCase() === 'fuel').reduce((sum, e) => sum + e.amount, 0);
-        const service = expenses.filter(e => e.type.toLowerCase().includes('service')).reduce((sum, e) => sum + e.amount, 0);
+        const total = filteredExpenses.reduce((sum, e) => sum + e.amount, 0);
+        const fuel = filteredExpenses.filter(e => e.type.toLowerCase() === 'fuel').reduce((sum, e) => sum + e.amount, 0);
+        const service = filteredExpenses.filter(e => e.type.toLowerCase().includes('service')).reduce((sum, e) => sum + e.amount, 0);
         const other = total - fuel - service;
 
         return {
-            total: `₹${total.toLocaleString()}`,
-            fuel: `₹${fuel.toLocaleString()}`,
-            service: `₹${service.toLocaleString()}`,
-            other: `₹${other.toLocaleString()}`
+            total: `₹${Math.round(total).toLocaleString()}`,
+            fuel: `₹${Math.round(fuel).toLocaleString()}`,
+            service: `₹${Math.round(service).toLocaleString()}`,
+            other: `₹${Math.round(other).toLocaleString()}`
         };
-    }, [expenses]);
+    }, [filteredExpenses]);
 
     const recentExpenses = useMemo(() => {
-        return [...expenses].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()).slice(0, 5);
-    }, [expenses]);
+        return [...filteredExpenses].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()).slice(0, 5);
+    }, [filteredExpenses]);
 
     const selectedVehicle = vehicles.find(v => v.id === selectedVehicleId);
+
+    const insets = useSafeAreaInsets();
+    const scrollY = React.useRef(new Animated.Value(0)).current;
+    const scrollRef = React.useRef<ScrollView>(null);
 
     return (
         <View style={styles.container}>
             {/* Header */}
-            <LinearGradient
-                colors={[COLORS.primary, COLORS.primaryDark]}
-                style={styles.header}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-            >
-                <View style={styles.headerContent}>
-                    <View style={{ flex: 1 }}>
-                        <Text style={styles.headerTitle}>Expenses</Text>
-                        <Text style={styles.headerSubtitle}>Track and manage your spending</Text>
+            <Header
+                title="Expenses"
+                subtitle="Track and manage your spending"
+                scrollY={scrollY}
+                forceExpanded={searchActive}
+                rightComponent={
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                        <TouchableOpacity onPress={() => {
+                            if (searchActive) {
+                                setSearchActive(false);
+                                setSearchQuery('');
+                            } else {
+                                scrollRef.current?.scrollTo({ y: 0, animated: true });
+                                setTimeout(() => setSearchActive(true), 200);
+                            }
+                        }}>
+                            <Ionicons name="search" size={24} color={COLORS.white} />
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                            style={styles.headerVehicleSelector}
+                            onPress={() => setVehicleModalVisible(true)}
+                        >
+                            <Ionicons name="car" size={16} color={COLORS.white} />
+                            <Text style={styles.headerVehicleText} numberOfLines={1}>
+                                {selectedVehicle ? selectedVehicle.model : 'All'}
+                            </Text>
+                            <Ionicons name="chevron-down" size={14} color={COLORS.white} />
+                        </TouchableOpacity>
                     </View>
-                    <TouchableOpacity
-                        style={styles.headerVehicleSelector}
-                        onPress={() => setVehicleModalVisible(true)}
-                    >
-                        <Ionicons name="car" size={16} color={COLORS.white} />
-                        <Text style={styles.headerVehicleText} numberOfLines={1}>
-                            {selectedVehicle ? selectedVehicle.model : 'All'}
-                        </Text>
-                        <Ionicons name="chevron-down" size={14} color={COLORS.white} />
-                    </TouchableOpacity>
-                </View>
-            </LinearGradient>
+                }
+            >
+                {searchActive && (
+                    <View style={styles.headerSearchBarActive}>
+                        <TouchableOpacity
+                            onPress={() => {
+                                setSearchActive(false);
+                                setSearchQuery('');
+                            }}
+                            style={styles.headerBackBtn}
+                        >
+                            <Ionicons name="arrow-back" size={24} color={COLORS.white} />
+                        </TouchableOpacity>
+                        <View style={styles.headerSearchInputWrapper}>
+                            <Ionicons name="search" size={20} color={COLORS.textLight} />
+                            <TextInput
+                                style={styles.headerSearchInput}
+                                placeholder="Search expenses..."
+                                placeholderTextColor={COLORS.textLight}
+                                value={searchQuery}
+                                onChangeText={setSearchQuery}
+                                autoFocus
+                            />
+                            {searchQuery.length > 0 && (
+                                <TouchableOpacity onPress={() => setSearchQuery('')} style={{ padding: 4 }}>
+                                    <Ionicons name="close-circle" size={18} color={COLORS.textLight} />
+                                </TouchableOpacity>
+                            )}
+                        </View>
+                    </View>
+                )}
+            </Header >
 
-            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 100 }}>
+            <Animated.ScrollView
+                ref={scrollRef as any}
+                showsVerticalScrollIndicator={false}
+                contentContainerStyle={{ paddingBottom: 100 }}
+                onScroll={Animated.event(
+                    [{ nativeEvent: { contentOffset: { y: scrollY } } }],
+                    { useNativeDriver: false }
+                )}
+                scrollEventThrottle={16}
+            >
                 {/* Period Selector */}
                 <View style={styles.periodContainer}>
                     {periods.map((period) => (
@@ -305,14 +377,14 @@ export default function ExpensesScreen() {
                                     </Text>
                                 </View>
                                 <View style={styles.amountContainer}>
-                                    <Text style={styles.expenseAmount}>₹{expense.amount.toLocaleString()}</Text>
+                                    <Text style={styles.expenseAmount}>₹{Math.round(expense.amount).toLocaleString()}</Text>
                                     <Ionicons name="chevron-forward" size={16} color={COLORS.border} />
                                 </View>
                             </TouchableOpacity>
                         ))
                     )}
                 </View>
-            </ScrollView>
+            </Animated.ScrollView>
 
             {/* Vehicle Selection Modal (Dropdown style) */}
             <Modal
@@ -394,7 +466,7 @@ export default function ExpensesScreen() {
                 </LinearGradient>
             </TouchableOpacity>
 
-        </View>
+        </View >
     );
 }
 
@@ -792,5 +864,32 @@ const styles = StyleSheet.create({
         fontSize: 13,
         fontWeight: 'bold',
         color: COLORS.text,
+    },
+    headerSearchBarActive: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingHorizontal: 0,
+        paddingBottom: 10,
+        marginTop: 10,
+        gap: 10,
+    },
+    headerBackBtn: {
+        padding: 5,
+    },
+    headerSearchInputWrapper: {
+        flex: 1,
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: COLORS.white,
+        borderRadius: 12,
+        paddingHorizontal: 15,
+        height: 44,
+        gap: 10,
+    },
+    headerSearchInput: {
+        flex: 1,
+        fontSize: 15,
+        color: COLORS.text,
+        paddingVertical: 8,
     },
 });

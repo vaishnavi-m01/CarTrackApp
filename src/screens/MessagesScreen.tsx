@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback } from 'react';
 import {
     View,
     Text,
@@ -8,202 +8,276 @@ import {
     TextInput,
     Image,
     StatusBar,
-    Platform,
-    Modal,
+    RefreshControl,
+    Animated,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { COLORS, SHADOWS } from '../constants/theme';
 import { StackNavigationProp } from '@react-navigation/stack';
 import { RootStackParamList } from '../navigation/MainNavigator';
+import { useAuth } from '../context/AuthContext';
+import apiClient from '../api/apiClient';
 
 type MessagesScreenNavigationProp = StackNavigationProp<RootStackParamList, 'Messages'>;
 
-const MOCK_MESSAGES = [
-    {
-        id: '1',
-        userName: 'TurboTom99',
-        lastMessage: 'Yo, did you see that new exhaust on the Ducati? Sounds insane!',
-        time: '2m ago',
-        image: 'https://randomuser.me/api/portraits/men/32.jpg',
-        unread: true,
-    },
-    {
-        id: '2',
-        userName: 'RevHigh_Sarah',
-        lastMessage: 'The group ride is starting at 10 AM at the hub.',
-        time: '15m ago',
-        image: 'https://randomuser.me/api/portraits/women/44.jpg',
-        unread: true,
-    },
-    {
-        id: '3',
-        userName: 'DriftKing_Leo',
-        lastMessage: 'Check out these track photos from last Sunday.',
-        time: '1h ago',
-        image: 'https://randomuser.me/api/portraits/men/85.jpg',
-        unread: false,
-    },
-    {
-        id: '4',
-        userName: 'Apex_Mechanics',
-        lastMessage: 'Your car is ready for pickup. Dyno results look good!',
-        time: '4h ago',
-        category: 'Service',
-        image: 'https://randomuser.me/api/portraits/brands/1.jpg',
-        unread: false,
-    },
-    {
-        id: '5',
-        userName: 'Classic_Clara',
-        lastMessage: 'Found a rare radiator at the swap meet today.',
-        time: '6h ago',
-        image: 'https://randomuser.me/api/portraits/women/12.jpg',
-        unread: false,
-    },
-];
-
-const AVAILABLE_CONTACTS = [
-    { id: '10', userName: 'SpeedDemon_Mike', image: 'https://randomuser.me/api/portraits/men/45.jpg' },
-    { id: '11', userName: 'NitroNancy', image: 'https://randomuser.me/api/portraits/women/68.jpg' },
-    { id: '12', userName: 'TrackStar_Alex', image: 'https://randomuser.me/api/portraits/men/22.jpg' },
-    { id: '13', userName: 'GearHead_Emma', image: 'https://randomuser.me/api/portraits/women/33.jpg' },
-    { id: '14', userName: 'RacerRick', image: 'https://randomuser.me/api/portraits/men/67.jpg' },
-    { id: '15', userName: 'BoostQueen_Lisa', image: 'https://randomuser.me/api/portraits/women/55.jpg' },
-];
-
 export default function MessagesScreen() {
     const navigation = useNavigation<MessagesScreenNavigationProp>();
+    const { user } = useAuth();
+
+    const [chats, setChats] = useState<any[]>([]);
+    const [loading, setLoading] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
-    const [showContactModal, setShowContactModal] = useState(false);
-    const [contactSearchQuery, setContactSearchQuery] = useState('');
+    const [isSearching, setIsSearching] = useState(false);
+    const [followedResults, setFollowedResults] = useState<any[]>([]);
+    const [otherResults, setOtherResults] = useState<any[]>([]);
+    const [isLoadingSearch, setIsLoadingSearch] = useState(false);
+    const [followingIds, setFollowingIds] = useState<number[]>([]);
+    const debounceRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
-    const filteredContacts = AVAILABLE_CONTACTS.filter(contact =>
-        contact.userName.toLowerCase().includes(contactSearchQuery.toLowerCase())
-    );
+    const scrollY = React.useRef(new Animated.Value(0)).current;
 
-    const handleNewMessage = (contact: typeof AVAILABLE_CONTACTS[0]) => {
-        setShowContactModal(false);
-        setContactSearchQuery('');
-        navigation.navigate('ChatDetail', {
-            userId: contact.id,
-            userName: contact.userName,
-            userImage: contact.image
-        });
+    React.useEffect(() => {
+        navigation.setParams({
+            scrollY,
+            headerRight: () => (
+                <TouchableOpacity onPress={() => setIsSearching(true)} style={{ marginRight: 15 }}>
+                    <Ionicons name="search" size={24} color={COLORS.white} />
+                </TouchableOpacity>
+            ),
+            showSearch: isSearching,
+            searchQuery: searchQuery,
+            onSearchChange: handleSearchChange,
+            onSearchClose: () => {
+                setIsSearching(false);
+                setSearchQuery('');
+                setFollowedResults([]);
+                setOtherResults([]);
+            }
+        } as any);
+    }, [isSearching, searchQuery]);
+
+    const fetchFollowing = useCallback(async () => {
+        if (!user?.id) return;
+        try {
+            const response = await apiClient.get(`/users/${user.id}/following`);
+            const ids = response.data.map((u: any) => u.id);
+            setFollowingIds(ids);
+        } catch (error) {
+            console.error('Error fetching following for search prioritization:', error);
+        }
+    }, [user?.id]);
+
+    const searchUsers = useCallback(async (text: string) => {
+        if (!text.trim()) {
+            setFollowedResults([]);
+            setOtherResults([]);
+            setIsSearching(false);
+            return;
+        }
+        setIsSearching(true);
+        setIsLoadingSearch(true);
+        try {
+            const response = await apiClient.get('/users/search', {
+                params: { query: text.trim() },
+            });
+            const allUsers = response.data || [];
+
+            // Categorize results
+            const followed = allUsers.filter((u: any) => followingIds.includes(u.id));
+            const others = allUsers.filter((u: any) => !followingIds.includes(u.id));
+
+            setFollowedResults(followed);
+            setOtherResults(others);
+        } catch (error) {
+            console.error('User search error:', error);
+            setFollowedResults([]);
+            setOtherResults([]);
+        } finally {
+            setIsLoadingSearch(false);
+        }
+    }, [followingIds]);
+
+    const handleSearchChange = (text: string) => {
+        setSearchQuery(text);
+        if (debounceRef.current) clearTimeout(debounceRef.current);
+        debounceRef.current = setTimeout(() => {
+            searchUsers(text);
+        }, 400);
     };
 
-    const renderChatItem = ({ item }: { item: typeof MOCK_MESSAGES[0] }) => (
-        <TouchableOpacity
-            style={styles.chatItem}
-            onPress={() => navigation.navigate('ChatDetail', {
-                userId: item.id,
-                userName: item.userName,
-                userImage: item.image
-            })}
-        >
-            <View style={styles.avatarContainer}>
-                <Image source={{ uri: item.image }} style={styles.avatar} />
-                {item.id === '4' && (
-                    <View style={styles.onlineBadge}>
-                        <Ionicons name="build" size={10} color="#fff" />
-                    </View>
-                )}
-            </View>
-            <View style={styles.chatContent}>
-                <View style={styles.chatHeader}>
-                    <Text style={styles.userName}>{item.userName}</Text>
-                    <Text style={[styles.timeText, item.unread && styles.unreadTime]}>{item.time}</Text>
-                </View>
-                <Text style={[styles.lastMessage, item.unread && styles.unreadMessage]} numberOfLines={1}>
-                    {item.lastMessage}
-                </Text>
-            </View>
-            {item.unread && <View style={styles.unreadIndicator} />}
-        </TouchableOpacity>
+    const fetchRecentChats = useCallback(async () => {
+        if (!user?.id) return;
+        setLoading(true);
+        try {
+            const response = await apiClient.get('/chat/recent-chats', {
+                params: { userId: user.id }
+            });
+            setChats(response.data);
+        } catch (error) {
+            console.error("❌ Error fetching recent chats:", error);
+        } finally {
+            setLoading(false);
+        }
+    }, [user?.id]);
+
+    useFocusEffect(
+        useCallback(() => {
+            fetchRecentChats();
+            fetchFollowing();
+        }, [fetchRecentChats, fetchFollowing])
     );
+
+    const filteredChats = chats.filter(chat => {
+        const isMe = String(chat.senderId) === String(user?.id);
+        const otherName = isMe ? chat.receiverName : chat.senderName;
+        return otherName?.toLowerCase().includes(searchQuery.toLowerCase());
+    });
+
+    const formatTime = (timestamp: string) => {
+        const date = new Date(timestamp);
+        const now = new Date();
+        const diffInMs = now.getTime() - date.getTime();
+        const diffInMins = Math.floor(diffInMs / (1000 * 60));
+        const diffInHours = Math.floor(diffInMs / (1000 * 60 * 60));
+        const diffInDays = Math.floor(diffInMs / (1000 * 60 * 60 * 24));
+
+        if (diffInMins < 1) return 'Just now';
+        if (diffInMins < 60) return `${diffInMins}m ago`;
+        if (diffInHours < 24) return `${diffInHours}h ago`;
+        return `${diffInDays}d ago`;
+    };
+
+    const renderChatItem = ({ item }: { item: any }) => {
+        const isMe = String(item.senderId) === String(user?.id);
+        const otherId = isMe ? item.receiverId : item.senderId;
+        const otherName = isMe ? item.receiverName : item.senderName;
+        const otherImage = isMe ? item.receiverImage : item.senderImage;
+        const isUnread = !item.isRead && !isMe;
+
+        return (
+            <TouchableOpacity
+                style={styles.chatItem}
+                onPress={() => navigation.navigate('ChatDetail', {
+                    userId: otherId,
+                    userName: otherName,
+                    userImage: otherImage || COLORS.defaultProfileImage
+                })}
+            >
+                <View style={styles.avatarContainer}>
+                    <Image
+                        source={otherImage ? { uri: otherImage } : COLORS.defaultProfileImage}
+                        style={styles.avatar}
+                    />
+                </View>
+                <View style={styles.chatContent}>
+                    <View style={styles.chatHeader}>
+                        <Text style={styles.userName}>{otherName}</Text>
+                        <Text style={[styles.timeText, isUnread && styles.unreadTime]}>
+                            {formatTime(item.timestamp)}
+                        </Text>
+                    </View>
+                    <Text style={[styles.lastMessage, isUnread && styles.unreadMessage]} numberOfLines={1}>
+                        {isMe ? `You: ${item.content}` : item.content}
+                    </Text>
+                </View>
+                {isUnread && <View style={styles.unreadIndicator} />}
+            </TouchableOpacity>
+        );
+    };
+
+    const renderSearchUser = ({ item }: { item: any }) => {
+        return (
+            <TouchableOpacity
+                style={styles.searchUserItem}
+                onPress={() =>
+                    navigation.navigate('ChatDetail', {
+                        userId: String(item.id),
+                        userName: item.username,
+                        userImage: item.profilePicUrl,
+                    })
+                }
+                activeOpacity={0.7}
+            >
+                <View style={styles.searchAvatarWrapper}>
+                    <Image
+                        source={item.profilePicUrl ? { uri: item.profilePicUrl } : COLORS.defaultProfileImage}
+                        style={styles.searchAvatar}
+                    />
+                </View>
+
+                <View style={styles.searchUserInfo}>
+                    <Text style={styles.searchUsernameText}>{item.username}</Text>
+                    <Text style={styles.searchNameText} numberOfLines={1}>
+                        {item.name || item.username}
+                        {item.bio ? ` • ${item.bio}` : ''}
+                    </Text>
+                </View>
+            </TouchableOpacity>
+        );
+    };
+
+    type MessageSearchItem =
+        | { type: 'header'; title: string; showSeeAll: boolean }
+        | { type: 'user'; data: any };
+
+    const searchSectionData: MessageSearchItem[] = [
+        ...followedResults.map(u => ({ type: 'user', data: u } as const)),
+        ...(otherResults.length > 0 ? [{ type: 'header', title: 'More accounts', showSeeAll: true } as const] : []),
+        ...otherResults.map(u => ({ type: 'user', data: u } as const)),
+    ];
 
     return (
         <View style={styles.container}>
             <StatusBar barStyle="dark-content" />
 
-            <View style={styles.searchContainer}>
-                <View style={styles.searchBar}>
-                    <Ionicons name="search" size={20} color={COLORS.textLight} />
-                    <TextInput
-                        style={styles.searchInput}
-                        placeholder="Search users or vehicles"
-                        placeholderTextColor={COLORS.textExtraLight}
-                        value={searchQuery}
-                        onChangeText={setSearchQuery}
-                    />
-                </View>
-            </View>
+            {isSearching ? (
+                <Animated.FlatList
+                    data={searchSectionData}
+                    keyExtractor={(item, index) => item.type === 'header' ? `header-${item.title}` : `user-${item.data.id}-${index}`}
+                    renderItem={({ item }) => {
+                        if (item.type === 'header') {
+                            return (
+                                <View style={styles.sectionHeader}>
+                                    <Text style={styles.sectionTitle}>{item.title}</Text>
+                                    {item.showSeeAll && (
+                                        <TouchableOpacity>
+                                            <Text style={styles.seeAllText}>See All</Text>
+                                        </TouchableOpacity>
+                                    )}
+                                </View>
+                            );
+                        }
+                        return renderSearchUser({ item: item.data });
+                    }}
+                    contentContainerStyle={styles.listContent}
+                    keyboardShouldPersistTaps="handled"
+                    showsVerticalScrollIndicator={false}
+                    onScroll={Animated.event(
+                        [{ nativeEvent: { contentOffset: { y: scrollY } } }],
+                        { useNativeDriver: false }
+                    )}
+                    scrollEventThrottle={16}
+                />
+            ) : (
+                <Animated.FlatList
+                    data={filteredChats}
+                    renderItem={renderChatItem}
+                    keyExtractor={(item) => item.id.toString()}
+                    contentContainerStyle={styles.listContent}
+                    showsVerticalScrollIndicator={false}
+                    refreshControl={
+                        <RefreshControl refreshing={loading} onRefresh={fetchRecentChats} />
+                    }
+                    onScroll={Animated.event(
+                        [{ nativeEvent: { contentOffset: { y: scrollY } } }],
+                        { useNativeDriver: false }
+                    )}
+                    scrollEventThrottle={16}
+                />
+            )}
 
-            <FlatList
-                data={MOCK_MESSAGES}
-                renderItem={renderChatItem}
-                keyExtractor={item => item.id}
-                contentContainerStyle={styles.listContent}
-                showsVerticalScrollIndicator={false}
-            />
 
-            <TouchableOpacity
-                style={styles.fab}
-                onPress={() => setShowContactModal(true)}
-            >
-                <Ionicons name="chatbubble" size={24} color="#fff" />
-            </TouchableOpacity>
-
-            <Modal
-                visible={showContactModal}
-                animationType="slide"
-                transparent={true}
-                onRequestClose={() => setShowContactModal(false)}
-            >
-                <View style={styles.modalOverlay}>
-                    <View style={styles.modalContainer}>
-                        <View style={styles.modalHeader}>
-                            <Text style={styles.modalTitle}>New Message</Text>
-                            <TouchableOpacity onPress={() => setShowContactModal(false)}>
-                                <Ionicons name="close" size={28} color={COLORS.text} />
-                            </TouchableOpacity>
-                        </View>
-                        <Text style={styles.modalSubtitle}>Select a contact to start chatting</Text>
-
-                        <View style={styles.modalSearchContainer}>
-                            <Ionicons name="search" size={20} color={COLORS.textLight} />
-                            <TextInput
-                                style={styles.modalSearchInput}
-                                placeholder="Search contacts..."
-                                placeholderTextColor={COLORS.textExtraLight}
-                                value={contactSearchQuery}
-                                onChangeText={setContactSearchQuery}
-                            />
-                            {contactSearchQuery.length > 0 && (
-                                <TouchableOpacity onPress={() => setContactSearchQuery('')}>
-                                    <Ionicons name="close-circle" size={20} color={COLORS.textLight} />
-                                </TouchableOpacity>
-                            )}
-                        </View>
-
-                        <FlatList
-                            data={filteredContacts}
-                            keyExtractor={item => item.id}
-                            renderItem={({ item }) => (
-                                <TouchableOpacity
-                                    style={styles.contactItem}
-                                    onPress={() => handleNewMessage(item)}
-                                >
-                                    <Image source={{ uri: item.image }} style={styles.contactAvatar} />
-                                    <Text style={styles.contactName}>{item.userName}</Text>
-                                    <Ionicons name="chevron-forward" size={20} color={COLORS.textLight} />
-                                </TouchableOpacity>
-                            )}
-                            showsVerticalScrollIndicator={false}
-                        />
-                    </View>
-                </View>
-            </Modal>
         </View>
     );
 }
@@ -213,27 +287,10 @@ const styles = StyleSheet.create({
         flex: 1,
         backgroundColor: COLORS.white,
     },
-    searchContainer: {
-        paddingHorizontal: 20,
-        marginVertical: 15,
-    },
-    searchBar: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        backgroundColor: COLORS.extraLightGray,
-        borderRadius: 12,
-        paddingHorizontal: 15,
-        height: 48,
-    },
-    searchInput: {
-        flex: 1,
-        marginLeft: 10,
-        color: COLORS.text,
-        fontSize: 16,
-    },
     listContent: {
         paddingHorizontal: 20,
         paddingBottom: 100,
+        paddingTop: 15,
     },
     chatItem: {
         flexDirection: 'row',
@@ -314,6 +371,66 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         ...SHADOWS.dark,
         elevation: 8,
+    },
+    // Search specific styles
+    sectionHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginTop: 20,
+        marginBottom: 10,
+    },
+    sectionTitle: {
+        fontSize: 16,
+        fontWeight: '700',
+        color: COLORS.text,
+    },
+    seeAllText: {
+        fontSize: 14,
+        fontWeight: '600',
+        color: COLORS.primary,
+    },
+    searchUserItem: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingVertical: 10,
+    },
+    searchAvatarWrapper: {
+        width: 60,
+        height: 60,
+        borderRadius: 30,
+        overflow: 'hidden',
+        marginRight: 12,
+        backgroundColor: COLORS.extraLightGray,
+    },
+    searchAvatar: {
+        width: 60,
+        height: 60,
+    },
+    searchAvatarPlaceholder: {
+        width: 60,
+        height: 60,
+        justifyContent: 'center',
+        alignItems: 'center',
+        backgroundColor: COLORS.primary,
+    },
+    searchAvatarInitial: {
+        color: COLORS.white,
+        fontSize: 24,
+        fontWeight: 'bold',
+    },
+    searchUserInfo: {
+        flex: 1,
+    },
+    searchUsernameText: {
+        fontSize: 15,
+        fontWeight: '700',
+        color: COLORS.text,
+    },
+    searchNameText: {
+        fontSize: 14,
+        color: COLORS.textLight,
+        marginTop: 2,
     },
     modalOverlay: {
         flex: 1,

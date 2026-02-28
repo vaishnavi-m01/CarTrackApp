@@ -10,6 +10,7 @@ import {
     Linking,
     ActivityIndicator,
     ToastAndroid,
+    Animated,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -28,6 +29,12 @@ export default function InsuranceScreen({ navigation, route }: { navigation: any
     const [insurance, setInsurance] = useState<any>(null);
     const [isLoading, setIsLoading] = useState(true);
     const [isDownloading, setIsDownloading] = useState(false);
+
+    const scrollY = React.useRef(new Animated.Value(0)).current;
+
+    React.useEffect(() => {
+        navigation.setParams({ scrollY });
+    }, []);
 
     const fetchInsurance = useCallback(async () => {
         if (!vehicleId) return;
@@ -106,7 +113,15 @@ export default function InsuranceScreen({ navigation, route }: { navigation: any
 
     return (
         <View style={styles.container}>
-            <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+            <Animated.ScrollView
+                contentContainerStyle={styles.content}
+                showsVerticalScrollIndicator={false}
+                onScroll={Animated.event(
+                    [{ nativeEvent: { contentOffset: { y: scrollY } } }],
+                    { useNativeDriver: false }
+                )}
+                scrollEventThrottle={16}
+            >
                 {isLoading ? (
                     <View style={styles.loadingContainer}>
                         <ActivityIndicator size="large" color={COLORS.primary} />
@@ -224,7 +239,7 @@ export default function InsuranceScreen({ navigation, route }: { navigation: any
                         </View>
                     </>
                 )}
-            </ScrollView>
+            </Animated.ScrollView>
 
             {/* Sticky Footer Button */}
             {!isLoading && insurance && (

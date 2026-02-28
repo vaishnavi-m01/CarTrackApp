@@ -115,8 +115,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const logout = async () => {
         try {
-            await AsyncStorage.removeItem(STORAGE_KEYS.USER);
-            // Optional: Call logout API if exists
+            await AsyncStorage.multiRemove([
+                STORAGE_KEYS.USER,
+                STORAGE_KEYS.FOLLOWING
+            ]);
             setUser(null);
         } catch (error) {
             console.error('Error during logout:', error);

@@ -10,6 +10,8 @@ import {
     Alert,
     ToastAndroid,
     Platform,
+    Animated,
+    ActivityIndicator,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
@@ -19,7 +21,6 @@ import VehicleCard from '../components/VehicleCard';
 import apiClient from '../api/apiClient';
 import { useAuth } from '../context/AuthContext';
 import { useState, useEffect } from 'react';
-import { ActivityIndicator } from 'react-native';
 
 const MOCK_VEHICLES: Vehicle[] = [
     {
@@ -173,6 +174,12 @@ export default function MyVehiclesScreen({ navigation }: { navigation: any }) {
     const [vehicleTypes, setVehicleTypes] = useState<any[]>([]);
     const [fuelTypes, setFuelTypes] = useState<any[]>([]);
 
+    const scrollY = React.useRef(new Animated.Value(0)).current;
+
+    useEffect(() => {
+        navigation.setParams({ scrollY });
+    }, []);
+
     useEffect(() => {
         fetchData();
 
@@ -307,9 +314,14 @@ export default function MyVehiclesScreen({ navigation }: { navigation: any }) {
 
     return (
         <View style={styles.container}>
-            <ScrollView
+            <Animated.ScrollView
                 contentContainerStyle={styles.scrollContent}
                 showsVerticalScrollIndicator={false}
+                onScroll={Animated.event(
+                    [{ nativeEvent: { contentOffset: { y: scrollY } } }],
+                    { useNativeDriver: false }
+                )}
+                scrollEventThrottle={16}
             >
                 {vehicles.length === 0 ? (
                     <View style={{ alignItems: 'center', marginTop: 50 }}>
@@ -329,7 +341,7 @@ export default function MyVehiclesScreen({ navigation }: { navigation: any }) {
 
                 {/* Extra space for FAB */}
                 <View style={{ height: 80 }} />
-            </ScrollView>
+            </Animated.ScrollView>
 
             <TouchableOpacity
                 style={styles.fab}

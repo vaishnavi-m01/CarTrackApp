@@ -4,6 +4,9 @@
     "slug": "cartrack-pro",
     "scheme": "cartrack",
     "version": "1.0.0",
+    "splash": {
+      "backgroundColor": "#ffffff"
+    },
     "icon": "./src/assets/icon.png",
     "primaryColor": "#764ba2",
     "userInterfaceStyle": "automatic",
@@ -11,24 +14,32 @@
       "**/*"
     ],
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "infoPlist": {
+        "UIBackgroundModes": [
+          "remote-notification"
+        ]
+      }
     },
     "android": {
       "package": "com.vaishnavim21052004.cartrackpro",
       "versionCode": 2,
+      "useNextNotificationsApi": true,
+      "googleServicesFile": "./google-services.json",
       "allowBackup": true,
-      "icon": "./src/assets/icon.png",
-      "adaptiveIcon": {
-        "foregroundImage": "./src/assets/adaptive-icon.png",
-        "backgroundColor": "#764ba2"
-      }
+      "permissions": [
+        "android.permission.RECORD_AUDIO",
+        "android.permission.MODIFY_AUDIO_SETTINGS"
+      ],
+      "softwareKeyboardLayoutMode": "adjustResize"
     },
     "extra": {
       "eas": {
-        "projectId": "e7b099aa-e6f4-479b-af9b-e5041afe4c03"
+        "projectId": "56f60623-eb67-49d0-82f0-0a81824a4868"
       }
     },
     "plugins": [
+      "@react-native-firebase/app",
       [
         "expo-build-properties",
         {
@@ -36,7 +47,9 @@
             "usesCleartextTraffic": true
           }
         }
-      ]
+      ],
+      "expo-video",
+      "expo-audio"
     ]
   }
 }

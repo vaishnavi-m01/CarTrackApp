@@ -17,7 +17,12 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { COLORS, SIZES, SHADOWS } from '../constants/theme';
-import { Comment } from '../types/Community';
+
+import { useNavigation } from '@react-navigation/native';
+import { StackNavigationProp } from '@react-navigation/stack';
+import { RootStackParamList } from '../navigation/MainNavigator';
+import { useAuth } from '../context/AuthContext';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 interface CommentBottomSheetProps {
     visible: boolean;
@@ -41,6 +46,25 @@ export default function CommentBottomSheet({
 }: CommentBottomSheetProps) {
     const [commentText, setCommentText] = useState('');
     const panY = useRef(new Animated.Value(SCREEN_HEIGHT)).current;
+    const navigation = useNavigation<StackNavigationProp<RootStackParamList>>();
+    const { user: currentUser } = useAuth();
+    const insets = useSafeAreaInsets();
+
+    const handleProfilePress = (comment: any) => {
+        const userId = comment.user?.id || comment.userId;
+        const userName = comment.user?.username || comment.userName;
+
+        if (currentUser && String(userId) === String(currentUser.id)) {
+            onClose();
+            navigation.navigate('MainTabs', { screen: 'Profile' });
+        } else if (userId) {
+            onClose();
+            navigation.navigate('OtherUserProfile', {
+                userId: userId.toString(),
+                userName: userName || 'User'
+            });
+        }
+    };
 
     const resetBottomSheet = Animated.timing(panY, {
         toValue: 0,
@@ -117,9 +141,10 @@ export default function CommentBottomSheet({
                     onPress={handleClose}
                 />
                 <KeyboardAvoidingView
-                    behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+                    behavior={Platform.OS === 'ios' ? 'padding' : 'padding'}
                     style={styles.kbView}
-                    keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}
+                    keyboardVerticalOffset={Platform.OS === 'android' ? 20 : 0}
+                    enabled={true}
                 >
                     <Animated.View
                         style={[
@@ -171,7 +196,10 @@ export default function CommentBottomSheet({
 
                                     return (
                                         <View key={comment.id} style={styles.commentItem}>
-                                            <View style={styles.commentAvatar}>
+                                            <TouchableOpacity
+                                                style={styles.commentAvatar}
+                                                onPress={() => handleProfilePress(comment)}
+                                            >
                                                 {userAvatar ? (
                                                     <Image source={{ uri: userAvatar }} style={styles.avatarImage} />
                                                 ) : (
@@ -179,10 +207,12 @@ export default function CommentBottomSheet({
                                                         {userName.charAt(0).toUpperCase()}
                                                     </Text>
                                                 )}
-                                            </View>
+                                            </TouchableOpacity>
                                             <View style={styles.commentContent}>
                                                 <View style={styles.commentHeader}>
-                                                    <Text style={styles.commentUserName}>{userName}</Text>
+                                                    <TouchableOpacity onPress={() => handleProfilePress(comment)}>
+                                                        <Text style={styles.commentUserName}>{userName}</Text>
+                                                    </TouchableOpacity>
                                                     <Text style={styles.commentTime}>
                                                         {formatTimestamp(new Date(timestamp))}
                                                     </Text>
@@ -196,7 +226,7 @@ export default function CommentBottomSheet({
                         </ScrollView>
 
                         {/* Add Comment Input */}
-                        <View style={styles.inputContainer}>
+                        <View style={[styles.inputContainer, { paddingBottom: Platform.OS === 'android' ? Math.max(insets.bottom, 34) : Math.max(insets.bottom, 12) }]}>
                             {allowComments ? (
                                 <View style={styles.inputWrapper}>
                                     <TextInput
@@ -257,7 +287,6 @@ const styles = StyleSheet.create({
         borderTopLeftRadius: 30,
         borderTopRightRadius: 30,
         height: SHEET_HEIGHT,
-        paddingBottom: Platform.OS === 'ios' ? 34 : 20,
         overflow: 'hidden',
     },
     dragHandleContainer: {

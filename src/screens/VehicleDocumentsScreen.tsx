@@ -15,7 +15,8 @@ import {
     ActivityIndicator,
     Dimensions,
     FlatList,
-    ToastAndroid
+    ToastAndroid,
+    Animated,
 } from 'react-native';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
@@ -40,6 +41,12 @@ export default function VehicleDocumentsScreen({ route, navigation }: { route: a
     const [documents, setDocuments] = useState<VehicleDocument[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [selectedDoc, setSelectedDoc] = useState<VehicleDocument | null>(null);
+
+    const scrollY = React.useRef(new Animated.Value(0)).current;
+
+    React.useEffect(() => {
+        navigation.setParams({ scrollY });
+    }, []);
 
     const fetchDocuments = async () => {
         try {
@@ -196,7 +203,15 @@ export default function VehicleDocumentsScreen({ route, navigation }: { route: a
 
     return (
         <SafeAreaView style={styles.container}>
-            <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+            <Animated.ScrollView
+                contentContainerStyle={styles.scrollContent}
+                showsVerticalScrollIndicator={false}
+                onScroll={Animated.event(
+                    [{ nativeEvent: { contentOffset: { y: scrollY } } }],
+                    { useNativeDriver: false }
+                )}
+                scrollEventThrottle={16}
+            >
                 <View style={styles.headerSpacer} />
                 {isLoading ? (
                     <ActivityIndicator size="large" color={COLORS.primary} style={{ marginTop: 50 }} />
@@ -209,7 +224,7 @@ export default function VehicleDocumentsScreen({ route, navigation }: { route: a
                 ) : (
                     documents.map(renderDocumentCard)
                 )}
-            </ScrollView>
+            </Animated.ScrollView>
 
             <TouchableOpacity style={styles.fab} onPress={() => {
                 navigation.navigate('AddDocument', { vehicleId });

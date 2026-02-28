@@ -8,6 +8,7 @@ import {
     Image,
     Dimensions,
     ActivityIndicator,
+    Animated,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -30,6 +31,12 @@ export default function WishlistScreen({ navigation }: { navigation: any }) {
     const [wishlistedCars, setWishlistedCars] = useState<Car[]>([]);
     const [isLoading, setIsLoading] = useState(true);
 
+    const scrollY = React.useRef(new Animated.Value(0)).current;
+
+    useEffect(() => {
+        navigation.setParams({ scrollY });
+    }, []);
+
     useEffect(() => {
         loadWishlistData();
     }, [wishlist.length]); // Reload if count changes (toggle happened)
@@ -38,7 +45,7 @@ export default function WishlistScreen({ navigation }: { navigation: any }) {
         if (!user?.id) return;
         setIsLoading(true);
         try {
-            const response = await getWishlist(user.id);
+            const response = await getWishlist(String(user.id));
             const data = response.data || [];
             // data is List<WishlistEntity> -> { id, user, marketInventory }
 
@@ -136,12 +143,17 @@ export default function WishlistScreen({ navigation }: { navigation: any }) {
                     <ActivityIndicator size="large" color={COLORS.primary} />
                 </View>
             ) : wishlistedCars.length > 0 ? (
-                <FlatList
+                <Animated.FlatList
                     data={wishlistedCars}
                     renderItem={renderWishlistItem}
                     keyExtractor={item => item.id}
                     contentContainerStyle={styles.listContent}
                     showsVerticalScrollIndicator={false}
+                    onScroll={Animated.event(
+                        [{ nativeEvent: { contentOffset: { y: scrollY } } }],
+                        { useNativeDriver: false }
+                    )}
+                    scrollEventThrottle={16}
                 />
             ) : (
                 <View style={styles.emptyContainer}>

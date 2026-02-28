@@ -61,7 +61,7 @@ export default function LoginScreen({ navigation }: LoginScreenProps) {
 
         if (success) {
             if (Platform.OS === 'android') {
-                ToastAndroid.show('Login successful', ToastAndroid.LONG);
+                // ToastAndroid.show('Login successful', ToastAndroid.LONG);
             }
             // Navigation handled by AuthContext state update in MainNavigator
         } else {

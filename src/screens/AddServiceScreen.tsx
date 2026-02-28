@@ -11,6 +11,7 @@ import {
     Keyboard,
     KeyboardAvoidingView,
     ToastAndroid,
+    Animated,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -37,6 +38,12 @@ export default function AddServiceScreen({ navigation, route }: { navigation: an
     const [isSaving, setIsSaving] = useState(false);
     const [isVehicleModalVisible, setIsVehicleModalVisible] = useState(false);
     const [isKeyboardVisible, setIsKeyboardVisible] = useState(false);
+
+    const scrollY = React.useRef(new Animated.Value(0)).current;
+
+    useEffect(() => {
+        navigation.setParams({ scrollY } as any);
+    }, []);
 
     useEffect(() => {
         const showSubscription = Keyboard.addListener('keyboardDidShow', () => setIsKeyboardVisible(true));
@@ -144,7 +151,15 @@ export default function AddServiceScreen({ navigation, route }: { navigation: an
             keyboardVerticalOffset={Platform.OS === 'ios' ? 80 : 0}
         >
             <View style={styles.container}>
-                <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+                <Animated.ScrollView
+                    contentContainerStyle={styles.content}
+                    showsVerticalScrollIndicator={false}
+                    onScroll={Animated.event(
+                        [{ nativeEvent: { contentOffset: { y: scrollY } } }],
+                        { useNativeDriver: false }
+                    )}
+                    scrollEventThrottle={16}
+                >
                     <View style={[styles.inputGroup, { marginTop: 0 }]}>
                         <Text style={styles.label}>Select Vehicle <Text style={styles.required}>*</Text></Text>
                         <TouchableOpacity
@@ -292,7 +307,7 @@ export default function AddServiceScreen({ navigation, route }: { navigation: an
                     </View>
 
                     <View style={{ height: 120 }} />
-                </ScrollView>
+                </Animated.ScrollView>
 
                 {!isKeyboardVisible && (
                     <View style={[

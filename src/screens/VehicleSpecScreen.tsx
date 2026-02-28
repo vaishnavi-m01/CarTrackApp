@@ -91,7 +91,11 @@ export default function VehicleSpecScreen({ navigation, route }: { navigation: a
                         brand: item.model.brand.name,
                         model: item.vehicleName || item.model.name,
                         year: item.year.toString(),
-                        price: `₹${item.priceNumeric >= 100 ? (item.priceNumeric / 100).toFixed(2) + ' Cr' : item.priceNumeric + ' Lakh'}`,
+                        price: item.priceNumeric >= 10000000
+                            ? `₹${(item.priceNumeric / 10000000).toFixed(2)} Cr`.replace('.00', '')
+                            : item.priceNumeric >= 100000
+                                ? `₹${(item.priceNumeric / 100000).toFixed(2)} Lakh`.replace('.00', '')
+                                : `₹${item.priceNumeric.toLocaleString('en-IN')}`,
                         priceNumeric: item.priceNumeric,
                         emi: item.emiDisplay,
                         image: mainImage,
@@ -294,7 +298,7 @@ export default function VehicleSpecScreen({ navigation, route }: { navigation: a
                 <View style={styles.priceContainer}>
                     <View>
                         <View style={styles.priceHeaderRow}>
-                            <Text style={styles.priceLabel}>Ex-Showroom Price</Text>
+                            <Text style={styles.priceLabel}>Showroom price</Text>
                             <View style={[styles.marketBadge, { backgroundColor: vehicle.priceNumeric > 80 ? '#fefce8' : '#f0fdf4' }]}>
                                 <Text style={[styles.marketBadgeText, { color: vehicle.priceNumeric > 80 ? '#854d0e' : '#15803d' }]}>
                                     {vehicle.priceNumeric > 80 ? 'Premium Choice' : 'Great Deal'}
@@ -778,7 +782,6 @@ const styles = StyleSheet.create({
         fontSize: 11,
         color: COLORS.textLight,
         fontWeight: '600',
-        textTransform: 'uppercase',
     },
     marketBadge: {
         paddingHorizontal: 8,

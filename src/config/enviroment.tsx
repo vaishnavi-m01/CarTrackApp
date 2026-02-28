@@ -14,21 +14,21 @@ export interface EnvironmentConfig {
 // Environment configurations
 const environments: Record<string, EnvironmentConfig> = {
     development: {
-        apiBaseUrl: 'http://103.146.234.88:3006/api/',
+        apiBaseUrl: 'http://103.146.234.88:3006/api',
         apiTimeout: 30000,
         enableLogging: true,
         enableAnalytics: false,
         version: '1.0.0-dev',
     },
     staging: {
-        apiBaseUrl: 'http://103.146.234.88:3006/api/',
+        apiBaseUrl: 'http://103.146.234.88:3006/api',
         apiTimeout: 30000,
         enableLogging: true,
         enableAnalytics: true,
         version: '1.0.0-staging',
     },
     production: {
-        apiBaseUrl: 'http://103.146.234.88:3006/api/',
+        apiBaseUrl: 'http://103.146.234.88:3006/api',
         apiTimeout: 15000,
         enableLogging: false,
         enableAnalytics: true,
@@ -38,8 +38,7 @@ const environments: Record<string, EnvironmentConfig> = {
 
 // Get current environment (defaults to development)
 const getCurrentEnvironment = (): string => {
-    // In React Native, you can use __DEV__ to detect development mode
-    // For production builds, you can use environment variables or build configurations
+
     if (__DEV__) {
         return 'development';
     }

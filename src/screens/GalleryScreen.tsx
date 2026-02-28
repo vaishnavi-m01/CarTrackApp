@@ -15,7 +15,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
-import { Video, ResizeMode } from 'expo-av';
+import { useVideoPlayer, VideoView } from 'expo-video';
 import { COLORS, SIZES, SHADOWS } from '../constants/theme';
 import { useApp } from '../context/AppContext';
 import { useAuth } from '../context/AuthContext';
@@ -24,6 +24,31 @@ import { GalleryAlbum } from '../types/Gallery';
 import { MediaItem } from '../types/Community';
 
 const { width, height } = Dimensions.get('window');
+
+const GalleryVideoPlayer = ({ source, isActive }: any) => {
+    const player = useVideoPlayer(source, (player) => {
+        player.loop = true;
+        if (isActive) {
+            player.play();
+        }
+    });
+
+    React.useEffect(() => {
+        if (isActive) {
+            player.play();
+        } else {
+            player.pause();
+        }
+    }, [isActive, player]);
+
+    return (
+        <VideoView
+            player={player}
+            style={styles.fullImage}
+            contentFit="contain"
+        />
+    );
+};
 
 export default function GalleryScreen({ navigation }: { navigation: any }) {
     const { user } = useAuth();
@@ -304,12 +329,9 @@ export default function GalleryScreen({ navigation }: { navigation: any }) {
                         renderItem={({ item }) => (
                             <View style={styles.imageSlide}>
                                 {item.type === 'video' ? (
-                                    <Video
-                                        source={{ uri: item.uri }}
-                                        style={styles.fullImage}
-                                        resizeMode={ResizeMode.CONTAIN}
-                                        useNativeControls
-                                        shouldPlay
+                                    <GalleryVideoPlayer
+                                        source={item.uri}
+                                        isActive={activeIndex === activeMedia.indexOf(item)}
                                     />
                                 ) : (
                                     <Image source={{ uri: item.uri }} style={styles.fullImage} resizeMode="contain" />

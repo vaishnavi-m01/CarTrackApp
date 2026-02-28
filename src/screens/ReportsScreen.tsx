@@ -7,6 +7,7 @@ import {
     StyleSheet,
     Dimensions,
     SafeAreaView,
+    Animated,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
@@ -21,6 +22,12 @@ export default function ReportsScreen({ navigation, route }: { navigation: any; 
     const insets = useSafeAreaInsets();
     const { vehicles, expenses, fuelLogs, trips } = useApp();
     const [selectedVehicleId, setSelectedVehicleId] = useState(route.params?.vehicleId || (vehicles.length > 0 ? vehicles[0].id : ''));
+
+    const scrollY = React.useRef(new Animated.Value(0)).current;
+
+    React.useEffect(() => {
+        navigation.setParams({ scrollY });
+    }, []);
 
     const selectedVehicle = vehicles.find(v => v.id === selectedVehicleId);
 
@@ -105,7 +112,15 @@ export default function ReportsScreen({ navigation, route }: { navigation: any; 
                 <View style={{ width: 40 }} />
             </View> */}
 
-            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 40 }}>
+            <Animated.ScrollView
+                showsVerticalScrollIndicator={false}
+                contentContainerStyle={{ paddingBottom: 40 }}
+                onScroll={Animated.event(
+                    [{ nativeEvent: { contentOffset: { y: scrollY } } }],
+                    { useNativeDriver: false }
+                )}
+                scrollEventThrottle={16}
+            >
                 {/* Dashboard Summary Cards */}
                 <View style={styles.summaryGrid}>
                     <LinearGradient colors={['#EEF2FF', '#E0E7FF']} style={styles.statCard}>
@@ -172,7 +187,7 @@ export default function ReportsScreen({ navigation, route }: { navigation: any; 
                             : "Your vehicle health is excellent. Following regular service intervals has saved you ~₹5,000 this year."}
                     </Text>
                 </LinearGradient>
-            </ScrollView>
+            </Animated.ScrollView>
         </View>
     );
 }

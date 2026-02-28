@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
     View,
     Text,
@@ -11,6 +11,9 @@ import {
     Platform,
     KeyboardAvoidingView,
     Switch,
+    ActivityIndicator,
+    ToastAndroid,
+    Animated,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
@@ -30,12 +33,47 @@ interface EditProfileScreenProps {
 export default function EditProfileScreen({ navigation }: EditProfileScreenProps) {
     const insets = useSafeAreaInsets();
     const { user, updateUser } = useAuth();
-    const [name, setName] = useState(user?.name || '');
-    const [bio, setBio] = useState(user?.bio || 'Automotive Enthusiast | Track Day Junkie | Miami, FL');
-    const [email, setEmail] = useState(user?.email || '');
-    const [isPrivate, setIsPrivate] = useState(user?.isPrivate ?? false);
+    const [name, setName] = useState('');
+    const [bio, setBio] = useState('');
+    const [email, setEmail] = useState('');
+    const [isPrivate, setIsPrivate] = useState(false);
     const [avatarImage, setAvatarImage] = useState<string | null>(null);
+    const [serverProfilePicUrl, setServerProfilePicUrl] = useState<string | null>(null);
     const [isSaving, setIsSaving] = useState(false);
+    const [isLoadingProfile, setIsLoadingProfile] = useState(true);
+
+    const scrollY = React.useRef(new Animated.Value(0)).current;
+
+    useEffect(() => {
+        navigation.setParams({ scrollY });
+    }, []);
+
+    // Fetch fresh data from server on mount so the latest profilePicUrl is shown
+    useEffect(() => {
+        const loadProfile = async () => {
+            if (!user?.id) return;
+            try {
+                const response = await apiClient.get(`/users/${user.id}`);
+                const data = response.data;
+                setName(data.username || data.name || '');
+                setEmail(data.email || '');
+                setBio(data.bio || '');
+                setIsPrivate(data.isPrivate ?? false);
+                setServerProfilePicUrl(data.profilePicUrl || null);
+            } catch (error) {
+                console.error('Failed to load profile:', error);
+                // Fallback to context
+                setName(user?.name || user?.username || '');
+                setEmail(user?.email || '');
+                setBio((user as any)?.bio || '');
+                setIsPrivate((user as any)?.isPrivate ?? false);
+                setServerProfilePicUrl(user?.profilePicUrl || null);
+            } finally {
+                setIsLoadingProfile(false);
+            }
+        };
+        loadProfile();
+    }, [user?.id]);
 
     const pickImage = async () => {
         const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -67,11 +105,13 @@ export default function EditProfileScreen({ navigation }: EditProfileScreenProps
         setIsSaving(true);
         try {
             // 1. Update Profile Text Data
-            const updatePayload = {
+            // Note: We do NOT include `password` in the payload.
+            // Sending an empty password would overwrite the existing one.
+            // A separate "Change Password" flow should be used for that.
+            const updatePayload: Record<string, any> = {
                 id: user.id,
                 username: name.trim(),
                 email: email.trim(),
-                password: '', // Kept empty as per API requirement if not changing
                 activeStatus: true,
                 roleId: (user as any).roleId || 0,
                 bio: bio.trim(),
@@ -81,7 +121,7 @@ export default function EditProfileScreen({ navigation }: EditProfileScreenProps
             await apiClient.put(`/users/${user.id}`, updatePayload);
 
             // 2. Upload Profile Picture if changed
-            let finalProfilePicUrl = user.profilePicUrl;
+            let finalProfilePicUrl = serverProfilePicUrl || user?.profilePicUrl;
             if (avatarImage && !avatarImage.startsWith('http')) {
                 const formData = new FormData();
                 const filename = avatarImage.split('/').pop() || 'profile.jpg';
@@ -115,7 +155,11 @@ export default function EditProfileScreen({ navigation }: EditProfileScreenProps
                 profilePicUrl: finalProfilePicUrl
             });
 
-            Alert.alert('Success', 'Profile updated successfully!');
+            if (Platform.OS === 'android') {
+                ToastAndroid.show('Profile updated successfully!', ToastAndroid.SHORT);
+            } else {
+                Alert.alert('Success', 'Profile updated successfully!');
+            }
             navigation.goBack();
         } catch (error) {
             console.error('Error updating profile:', error);
@@ -125,14 +169,28 @@ export default function EditProfileScreen({ navigation }: EditProfileScreenProps
         }
     };
 
+    if (isLoadingProfile) {
+        return (
+            <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: COLORS.background }}>
+                <ActivityIndicator size="large" color={COLORS.primary} />
+                <Text style={{ marginTop: 12, color: COLORS.textLight, fontWeight: '600' }}>Loading profile...</Text>
+            </View>
+        );
+    }
+
     return (
         <KeyboardAvoidingView
             behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
             style={styles.container}
         >
-            <ScrollView
+            <Animated.ScrollView
                 showsVerticalScrollIndicator={false}
                 contentContainerStyle={styles.scrollContent}
+                onScroll={Animated.event(
+                    [{ nativeEvent: { contentOffset: { y: scrollY } } }],
+                    { useNativeDriver: false }
+                )}
+                scrollEventThrottle={16}
             >
                 {/* Avatar Section */}
                 <View style={styles.avatarSection}>
@@ -142,9 +200,12 @@ export default function EditProfileScreen({ navigation }: EditProfileScreenProps
                         activeOpacity={0.8}
                     >
                         <Image
-                            source={{
-                                uri: avatarImage || user?.profilePicUrl || 'https://images.unsplash.com/photo-1599566150163-29194dcaad36?w=200',
-                            }}
+                            source={avatarImage
+                                ? { uri: avatarImage }
+                                : serverProfilePicUrl
+                                    ? { uri: serverProfilePicUrl }
+                                    : COLORS.defaultProfileImage
+                            }
                             style={styles.avatar}
                         />
                         <View style={styles.cameraOverlay}>
@@ -231,7 +292,7 @@ export default function EditProfileScreen({ navigation }: EditProfileScreenProps
                 </View>
 
                 <View style={{ height: 30 }} />
-            </ScrollView>
+            </Animated.ScrollView>
         </KeyboardAvoidingView>
     );
 }
@@ -264,6 +325,7 @@ const styles = StyleSheet.create({
         width: '100%',
         height: '100%',
         borderRadius: 60,
+        resizeMode: 'contain',
     },
     cameraOverlay: {
         position: 'absolute',
@@ -306,7 +368,6 @@ const styles = StyleSheet.create({
         fontSize: 15,
         color: COLORS.text,
         fontWeight: '500',
-        ...SHADOWS.light,
     },
     bioInput: {
         minHeight: 100,
@@ -358,7 +419,6 @@ const styles = StyleSheet.create({
         paddingHorizontal: 16,
         paddingVertical: 14,
         marginTop: 10,
-        ...SHADOWS.light,
     },
     switchTextContainer: {
         flex: 1,

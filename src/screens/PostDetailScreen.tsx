@@ -17,11 +17,13 @@ import {
     ToastAndroid,
     PanResponder,
     Animated,
+    Linking,
 } from 'react-native';
 import apiClient from '../api/apiClient';
 import { Ionicons } from '@expo/vector-icons';
-import { Video, ResizeMode } from 'expo-av';
+import { useVideoPlayer, VideoView } from 'expo-video';
 import { LinearGradient } from 'expo-linear-gradient';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StackNavigationProp } from '@react-navigation/stack';
 import { RootStackParamList } from '../navigation/MainNavigator';
 import { COLORS, SHADOWS, SIZES } from '../constants/theme';
@@ -39,10 +41,118 @@ interface PostDetailScreenProps {
     route: any;
 }
 
-const normalizeTags = (tags: string | string[] | undefined): string[] => {
-    if (!tags) return [];
-    if (Array.isArray(tags)) return tags;
-    return tags.split(',').map(tag => tag.trim()).filter(Boolean);
+const formatTime = (millis: number) => {
+    const totalSeconds = millis / 1000;
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = Math.floor(totalSeconds % 60);
+    return `${minutes}:${seconds < 10 ? '0' : ''}${seconds}`;
+};
+
+const DetailVideoItem = ({ source, isActive, screenWidth, screenHeight, isMuted, isPaused, togglePause, toggleMute }: any) => {
+    const player = useVideoPlayer(source, (player) => {
+        player.loop = true;
+        player.muted = isMuted;
+        if (isActive && !isPaused) {
+            player.play();
+        }
+    });
+
+    const [currentTime, setCurrentTime] = useState(0);
+    const [duration, setDuration] = useState(0);
+    const [isSeeking, setIsSeeking] = useState(false);
+
+    useEffect(() => {
+        player.muted = isMuted;
+    }, [isMuted, player]);
+
+    useEffect(() => {
+        if (isActive && !isPaused && !isSeeking) {
+            player.play();
+        } else {
+            player.pause();
+        }
+    }, [isActive, isPaused, isSeeking, player]);
+
+    useEffect(() => {
+        const interval = setInterval(() => {
+            if (!isSeeking) {
+                setCurrentTime(player.currentTime);
+                setDuration(player.duration);
+            }
+        }, 100);
+        return () => clearInterval(interval);
+    }, [player, isSeeking]);
+
+    const progress = duration > 0 ? currentTime / duration : 0;
+
+    const handleSeek = (event: any) => {
+        const touchX = event.nativeEvent.pageX;
+        const seekProgress = Math.max(0, Math.min(1, touchX / screenWidth));
+        const seekTime = seekProgress * duration;
+        setCurrentTime(seekTime);
+        player.seekBy(seekTime - player.currentTime);
+    };
+
+    return (
+        <View style={{ width: screenWidth, height: screenHeight, justifyContent: 'center' }}>
+            <TouchableWithoutFeedback onPress={togglePause}>
+                <View style={{ width: screenWidth, height: screenHeight }}>
+                    <VideoView
+                        player={player}
+                        style={[styles.postImage, { width: screenWidth, height: screenHeight }]}
+                        contentFit="contain"
+                    />
+                    {!isSeeking && isPaused && (
+                        <View style={[StyleSheet.absoluteFill, { justifyContent: 'center', alignItems: 'center' }]}>
+                            <View style={styles.playIconContainer}>
+                                <Ionicons name="play" size={50} color="rgba(255,255,255,0.8)" />
+                            </View>
+                        </View>
+                    )}
+                    <TouchableOpacity
+                        style={styles.muteBtnOverlay}
+                        onPress={toggleMute}
+                        activeOpacity={0.7}
+                    >
+                        <Ionicons
+                            name={isMuted ? "volume-mute" : "volume-high"}
+                            size={18}
+                            color="#fff"
+                        />
+                    </TouchableOpacity>
+                </View>
+            </TouchableWithoutFeedback>
+
+            {isActive && (
+                <View
+                    style={styles.progressBarWrapper}
+                    onStartShouldSetResponder={() => true}
+                    onResponderGrant={(e) => {
+                        setIsSeeking(true);
+                        handleSeek(e);
+                    }}
+                    onResponderMove={handleSeek}
+                    onResponderRelease={() => setIsSeeking(false)}
+                    onResponderTerminate={() => setIsSeeking(false)}
+                >
+                    <View style={[styles.progressBarContainer, isSeeking && styles.progressBarContainerActive]}>
+                        <View style={[styles.progressBar, { width: `${progress * 100}%` }]} />
+                        <View
+                            style={[
+                                styles.scrubberHandle,
+                                { left: `${progress * 100}%` },
+                                isSeeking && styles.scrubberHandleActive
+                            ]}
+                        />
+                    </View>
+                    <View style={styles.durationLabels}>
+                        <Text style={styles.durationText}>{formatTime(currentTime * 1000)}</Text>
+                        <Text style={styles.durationText}>{formatTime(duration * 1000)}</Text>
+                    </View>
+                </View>
+            )}
+        </View>
+    );
 };
 
 const PostItem = ({
@@ -65,7 +175,8 @@ const PostItem = ({
     onUserPress,
     onShowLikers,
     onEdit,
-    onDelete
+    onDelete,
+    insets
 }: {
     item: CommunityPost;
     isActive: boolean;
@@ -87,6 +198,7 @@ const PostItem = ({
     screenWidth: number;
     postIndex: number;
     totalPosts: number;
+    insets: any;
 }) => {
     const [currentMediaIndex, setCurrentMediaIndex] = useState(0);
     const [mountDelayed, setMountDelayed] = useState(false);
@@ -98,7 +210,7 @@ const PostItem = ({
     const [numLines, setNumLines] = useState(0);
     const [isMenuVisible, setIsMenuVisible] = useState(false);
     const isMounted = useRef(true);
-    const videoRef = useRef<Video>(null);
+    // Remove individual video state as it's now handled by the DetailVideoItem
     const mountTimer = useRef<any>(null);
 
     // NUCLEAR STABILITY: Use a "Cool-Down" delay.
@@ -124,9 +236,6 @@ const PostItem = ({
         return () => {
             isMounted.current = false;
             if (mountTimer.current) clearTimeout(mountTimer.current);
-            if (videoRef.current) {
-                videoRef.current.unloadAsync().catch(() => { });
-            }
         };
     }, []);
 
@@ -141,31 +250,25 @@ const PostItem = ({
         Haptics.selectionAsync();
     };
 
-    const formatTime = (millis: number) => {
-        const totalSeconds = millis / 1000;
-        const minutes = Math.floor(totalSeconds / 60);
-        const seconds = Math.floor(totalSeconds % 60);
-        return `${minutes}:${seconds < 10 ? '0' : ''}${seconds}`;
-    };
+    const renderContentWithLinks = (text: string) => {
+        if (!text) return null;
+        const urlRegex = /(https?:\/\/[^\s]+)/g;
+        const parts = text.split(urlRegex);
 
-    const handlePlaybackUpdate = (status: any) => {
-        if (!isMounted.current || isSeeking) return;
-        if (status.isLoaded) {
-            setPlaybackStatus(status);
-        }
-    };
-
-    const handleSeek = (event: any) => {
-        if (!videoRef.current || !playbackStatus?.durationMillis) return;
-
-        // Use pageX for global accuracy relative to screen width
-        const touchX = event.nativeEvent.pageX;
-        const seekProgress = Math.max(0, Math.min(1, touchX / screenWidth));
-        const seekTime = seekProgress * playbackStatus.durationMillis;
-
-        // Immediate visual update
-        setPlaybackStatus({ ...playbackStatus, positionMillis: seekTime });
-        videoRef.current.setPositionAsync(seekTime).catch(() => { });
+        return parts.map((part, index) => {
+            if (part.match(urlRegex)) {
+                return (
+                    <Text
+                        key={index}
+                        style={{ color: '#3B82F6', textDecorationLine: 'underline' }}
+                        onPress={() => Linking.openURL(part)}
+                    >
+                        {part}
+                    </Text>
+                );
+            }
+            return part;
+        });
     };
 
     const isLiked = item.likedByUser || false;
@@ -180,13 +283,11 @@ const PostItem = ({
             if (!mountDelayed || !isActive) {
                 return (
                     <View style={{ width: screenWidth, height: screenHeight, backgroundColor: '#000' }}>
-                        {item.media && item.media[0] && (
-                            <Image
-                                source={{ uri: mediaItem.mediaUrl || mediaItem.uri }}
-                                style={[styles.postImage, { width: screenWidth, height: screenHeight }]}
-                                resizeMode="contain"
-                            />
-                        )}
+                        <Image
+                            source={{ uri: mediaItem.mediaUrl || mediaItem.uri }}
+                            style={[styles.postImage, { width: screenWidth, height: screenHeight }]}
+                            resizeMode="contain"
+                        />
                         <View style={[StyleSheet.absoluteFill, { justifyContent: 'center', alignItems: 'center' }]}>
                             <Ionicons name="play-circle" size={80} color="rgba(255,255,255,0.4)" />
                         </View>
@@ -194,85 +295,17 @@ const PostItem = ({
                 );
             }
 
-            const progress = (playbackStatus?.positionMillis || 0) / (playbackStatus?.durationMillis || 1);
-
             return (
-                <View
-                    style={{ width: screenWidth, height: screenHeight, justifyContent: 'center' }}
-                    collapsable={false} // CRITICAL: Stop Android from optimizing this view away (Fixes ViewState crash)
-                >
-                    <TouchableWithoutFeedback onPress={togglePause}>
-                        <View style={{ width: screenWidth, height: screenHeight }}>
-                            <Video
-                                key={`video-${mediaItem.id || mediaItem.mediaUrl || mediaItem.uri}`}
-                                ref={videoRef}
-                                source={{ uri: mediaItem.mediaUrl || mediaItem.uri }}
-                                style={[styles.postImage, { width: screenWidth, height: screenHeight }]}
-                                resizeMode={ResizeMode.CONTAIN}
-                                shouldPlay={isMediaActive && !commentSheetVisible && !isPaused && !isSeeking}
-                                isLooping={true}
-                                isMuted={isMuted}
-                                shouldCorrectPitch={false}
-                                useNativeControls={false}
-                                progressUpdateIntervalMillis={500}
-                                onPlaybackStatusUpdate={handlePlaybackUpdate}
-                            />
-                            {/* Tap to Play/Pause Overlay */}
-                            {!isSeeking && (
-                                <View style={[StyleSheet.absoluteFill, { justifyContent: 'center', alignItems: 'center' }]}>
-                                    {isPaused && (
-                                        <View style={styles.playIconContainer}>
-                                            <Ionicons name="play" size={50} color="rgba(255,255,255,0.8)" />
-                                        </View>
-                                    )}
-                                </View>
-                            )}
-
-                            {/* Mute Toggle Icon overlay */}
-                            <TouchableOpacity
-                                style={styles.muteBtnOverlay}
-                                onPress={toggleMute}
-                                activeOpacity={0.7}
-                            >
-                                <Ionicons
-                                    name={isMuted ? "volume-mute" : "volume-high"}
-                                    size={18}
-                                    color="#fff"
-                                />
-                            </TouchableOpacity>
-                        </View>
-                    </TouchableWithoutFeedback>
-
-                    {/* Premium Instagram-Style Scrubber */}
-                    {isMediaActive && (
-                        <View
-                            style={styles.progressBarWrapper}
-                            onStartShouldSetResponder={() => true}
-                            onResponderGrant={(e) => {
-                                setIsSeeking(true);
-                                handleSeek(e);
-                            }}
-                            onResponderMove={handleSeek}
-                            onResponderRelease={() => setIsSeeking(false)}
-                            onResponderTerminate={() => setIsSeeking(false)}
-                        >
-                            <View style={[styles.progressBarContainer, isSeeking && styles.progressBarContainerActive]}>
-                                <View style={[styles.progressBar, { width: `${progress * 100}%` }]} />
-                                <View
-                                    style={[
-                                        styles.scrubberHandle,
-                                        { left: `${progress * 100}%` },
-                                        isSeeking && styles.scrubberHandleActive
-                                    ]}
-                                />
-                            </View>
-                            <View style={styles.durationLabels}>
-                                <Text style={styles.durationText}>{formatTime(playbackStatus?.positionMillis || 0)}</Text>
-                                <Text style={styles.durationText}>{formatTime(playbackStatus?.durationMillis || 0)}</Text>
-                            </View>
-                        </View>
-                    )}
-                </View>
+                <DetailVideoItem
+                    source={mediaItem.mediaUrl || mediaItem.uri}
+                    isActive={isMediaActive && !commentSheetVisible}
+                    screenWidth={screenWidth}
+                    screenHeight={screenHeight}
+                    isMuted={isMuted}
+                    isPaused={isPaused}
+                    togglePause={togglePause}
+                    toggleMute={toggleMute}
+                />
             );
         }
 
@@ -345,7 +378,7 @@ const PostItem = ({
             {/* Reels Overlay Components */}
             <View style={styles.reelsOverlay} pointerEvents="box-none">
                 {/* Left Side: User Info, Music, Caption */}
-                <View style={styles.reelsInfoContainer}>
+                <View style={[styles.reelsInfoContainer, { paddingBottom: insets.bottom + (Platform.OS === 'android' ? 50 : 40) }]}>
                     <View style={styles.reelsUserAndMusic}>
                         <TouchableOpacity
                             style={styles.reelsUserRow}
@@ -361,76 +394,39 @@ const PostItem = ({
                                     </View>
                                 )}
                             </View>
-                            <Text style={styles.reelsUserName}>{item.userName}</Text>
-                            <Ionicons name="checkmark-circle" size={14} color="#3B82F6" style={{ marginLeft: 4 }} />
-                            <TouchableOpacity style={styles.followBtn}>
-                                <Text style={styles.followBtnText}>Follow</Text>
-                            </TouchableOpacity>
+                            <View>
+                                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                                    <Text style={styles.reelsUserName}>{item.userName}</Text>
+                                    <Ionicons name="checkmark-circle" size={14} color="#3B82F6" style={{ marginLeft: 4 }} />
+                                </View>
+                                {item.location && (
+                                    <View style={[styles.reelsLocationContainer, { marginTop: 2 }]}>
+                                        <Ionicons name="location" size={10} color="#fff" />
+                                        <Text style={[styles.reelsLocationText, { fontSize: 10 }]}>{item.location}</Text>
+                                    </View>
+                                )}
+                            </View>
                         </TouchableOpacity>
 
-                        <View style={styles.musicRow}>
-                            <Ionicons name="musical-notes" size={14} color="#fff" />
-                            <Text style={styles.musicText}>{item.userName} • Original Audio</Text>
-                        </View>
-                    </View>
-
-                    <View style={styles.captionArea}>
-                        <View style={styles.captionContainer}>
-                            {expanded ? (
-                                <ScrollView
-                                    style={{ maxHeight: 150 }}
-                                    showsVerticalScrollIndicator={false}
-                                    nestedScrollEnabled={true}
-                                >
-                                    <Text style={styles.reelsCaption}>
-                                        {item.content}
-                                    </Text>
-                                </ScrollView>
-                            ) : (
-                                <Text
-                                    style={styles.reelsCaption}
-                                    numberOfLines={expanded ? undefined : 2}
-                                    onTextLayout={(e) => {
-                                        if (!expanded) {
-                                            setNumLines(e.nativeEvent.lines.length);
-                                        }
-                                    }}
-                                >
-                                    {item.content}
-                                </Text>
-                            )}
-                            {numLines >= 2 && !expanded && (
-                                <TouchableOpacity onPress={() => setExpanded(true)}>
-                                    <Text style={styles.moreText}> ...more</Text>
-                                </TouchableOpacity>
-                            )}
-                            {expanded && (
-                                <TouchableOpacity onPress={() => setExpanded(false)}>
-                                    <Text style={styles.moreText}> Show less</Text>
-                                </TouchableOpacity>
-                            )}
-                        </View>
-
-                        {item.location && (
-                            <View style={styles.reelsLocationContainer}>
-                                <Ionicons name="location" size={12} color="#fff" />
-                                <Text style={styles.reelsLocationText}>{item.location}</Text>
-                            </View>
-                        )}
-
-                        {/* Tags */}
-                        {normalizeTags(item.tags).length > 0 && (
-                            <View style={styles.reelsTagsContainer}>
-                                {normalizeTags(item.tags).map((tag, idx) => (
-                                    <Text key={idx} style={styles.reelsTagText}>#{tag.replace(/^#+/, '')} </Text>
-                                ))}
-                            </View>
-                        )}
+                        {/* <View style={styles.musicRow}>
+                            <Ionicons name="musical-notes" size={12} color="#fff" />
+                            <Text style={[styles.musicText, { fontSize: 12 }]}>{item.userName} • Original Audio</Text>
+                        </View> */}
                     </View>
                 </View>
 
+                {/* Persistent Bottom Comment Bar */}
+                <View style={[styles.persistentBottomBar, { bottom: insets.bottom + (Platform.OS === 'android' ? 25 : 15) }]}>
+                    <TouchableOpacity
+                        style={styles.persistentInputContainer}
+                        onPress={() => setCommentSheetVisible(true)}
+                    >
+                        <Text style={styles.persistentInputText}>Add comment...</Text>
+                    </TouchableOpacity>
+                </View>
+
                 {/* Right Side: Actions Bar */}
-                <View style={styles.reelsActions}>
+                <View style={[styles.reelsActions, { bottom: insets.bottom + (Platform.OS === 'android' ? 85 : 75) }]}>
                     <View style={styles.reelsActionBtn}>
                         <TouchableOpacity onPress={() => handleLike(item.id)}>
                             <Ionicons name={isLiked ? 'heart' : 'heart-outline'} size={36} color={isLiked ? "#EF4444" : "#fff"} />
@@ -453,15 +449,17 @@ const PostItem = ({
                     <TouchableOpacity style={styles.reelsActionBtn} onPress={() => togglePostSave(item.id)}>
                         <Ionicons
                             name={isSaved ? "bookmark" : "bookmark-outline"}
-                            size={24}
-                            color={isSaved ? COLORS.primary : "#fff"}
+                            size={32}
+                            color={isSaved ? "#3B82F6" : "#fff"}
                         />
                         <Text style={styles.reelsActionText}>{item.savesCount || 0}</Text>
                     </TouchableOpacity>
 
-                    <TouchableOpacity style={styles.reelsActionBtn} onPress={() => setIsMenuVisible(!isMenuVisible)}>
-                        <Ionicons name="ellipsis-vertical" size={28} color="#fff" />
-                    </TouchableOpacity>
+                    {isOwnPost && (
+                        <TouchableOpacity style={styles.reelsActionBtn} onPress={() => setIsMenuVisible(!isMenuVisible)}>
+                            <Ionicons name="ellipsis-vertical" size={28} color="#fff" />
+                        </TouchableOpacity>
+                    )}
 
                     {isMenuVisible && (
                         <>
@@ -524,6 +522,7 @@ export default function PostDetailScreen({ navigation, route }: PostDetailScreen
     const screenHeight = Dimensions.get('screen').height;
     const { user } = useAuth();
     const { wishlist, fetchWishlist } = useApp();
+    const insets = useSafeAreaInsets();
 
     // Internal state for posts to allow updates within this screen
     const [localPosts, setLocalPosts] = useState<CommunityPost[]>(navPosts || [initialPost]);
@@ -633,13 +632,27 @@ export default function PostDetailScreen({ navigation, route }: PostDetailScreen
 
     const togglePostSave = async (postId: string | number) => {
         if (!user) return;
+
+        // Immediate UI update
+        setLocalPosts(prev => prev.map(post => {
+            if (post.id === postId) {
+                const nowSaved = !post.isSaved;
+                return {
+                    ...post,
+                    isSaved: nowSaved,
+                    savesCount: nowSaved ? (post.savesCount + 1) : Math.max(0, post.savesCount - 1)
+                };
+            }
+            return post;
+        }));
+
         try {
             await apiClient.post(`/post/${postId}/save?userId=${user.id}`);
             await fetchWishlist();
-            const isSaved = wishlist && wishlist.includes(postId.toString());
-            AndroidToast(!isSaved ? 'Post saved to profile' : 'Post removed from saved');
         } catch (error) {
             console.error('Error toggling post save:', error);
+            // Revert on error
+            await fetchWishlist();
         }
     };
 
@@ -781,7 +794,7 @@ export default function PostDetailScreen({ navigation, route }: PostDetailScreen
     const handleClose = () => navigation.goBack();
     const handleUserPress = (userId: string | number, userName: string) => {
         if (userId.toString() === user?.id?.toString()) {
-            navigation.navigate('Profile' as any);
+            navigation.navigate('MainTabs', { screen: 'Profile' });
         } else {
             navigation.navigate('OtherUserProfile', { userId: userId.toString(), userName });
         }
@@ -834,6 +847,7 @@ export default function PostDetailScreen({ navigation, route }: PostDetailScreen
                 onShowLikers={handleShowLikers}
                 onEdit={handleEditPost}
                 onDelete={deletePost}
+                insets={insets}
             />
         );
     };
@@ -1341,11 +1355,11 @@ const styles = StyleSheet.create({
     },
     reelsActions: {
         position: 'absolute',
-        right: 16,
-        bottom: 110,
+        right: 12,
+        bottom: Platform.OS === 'android' ? 80 : 100, // Balanced for mobile devices
         alignItems: 'center',
-        gap: 25,
-        zIndex: 100,
+        gap: 22,
+        zIndex: 110,
     },
     reelsActionBtn: {
         alignItems: 'center',
@@ -1362,24 +1376,30 @@ const styles = StyleSheet.create({
         flex: 1,
         backgroundColor: '#000',
     },
-    persistentInputBar: {
+    persistentBottomBar: {
+        position: 'absolute',
+        bottom: Platform.OS === 'ios' ? 30 : 20,
+        left: 16,
+        right: 80,
+        zIndex: 120,
+    },
+    persistentInputContainer: {
         backgroundColor: 'rgba(255,255,255,0.2)',
         borderRadius: 25,
         paddingHorizontal: 16,
-        paddingVertical: 10,
-        marginTop: 15,
+        paddingVertical: 12,
         borderWidth: 1,
-        borderColor: 'rgba(255,255,255,0.1)',
+        borderColor: 'rgba(255,255,255,0.3)',
     },
     persistentInputText: {
         color: 'rgba(255,255,255,0.8)',
         fontSize: 14,
     },
     userInfoTop: {
-        display: 'none', // Not needed for Reels UI
+        display: 'none',
     },
     bottomActions: {
-        display: 'none', // Not needed for Reels UI
+        display: 'none',
     },
     playIconContainer: {
         backgroundColor: 'rgba(0,0,0,0.2)',

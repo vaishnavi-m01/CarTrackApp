@@ -168,7 +168,7 @@ export default function ExpenseHistoryScreen() {
             <View style={styles.cardContent}>
                 <View style={styles.cardHeader}>
                     <Text style={styles.expenseType}>{item.type}</Text>
-                    <Text style={styles.expenseAmount}>₹{item.amount.toLocaleString()}</Text>
+                    <Text style={styles.expenseAmount}>₹{Math.round(item.amount).toLocaleString()}</Text>
                 </View>
                 <View style={styles.cardFooter}>
                     <Text style={styles.dateText}>
@@ -321,7 +321,7 @@ export default function ExpenseHistoryScreen() {
                         </View>
                         <View style={[styles.summaryBadge, { minWidth: 100 }]}>
                             <Text style={styles.summaryLabel}>Total:</Text>
-                            <Text style={styles.summaryValue} numberOfLines={1}>₹{totalAmount.toLocaleString()}</Text>
+                            <Text style={styles.summaryValue} numberOfLines={1}>₹{Math.round(totalAmount).toLocaleString()}</Text>
                         </View>
                     </View>
                 }

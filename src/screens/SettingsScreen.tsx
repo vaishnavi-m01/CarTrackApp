@@ -9,6 +9,7 @@ import {
     Platform,
     Alert,
     SafeAreaView,
+    Animated,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { COLORS, SIZES, SHADOWS } from '../constants/theme';
@@ -16,6 +17,7 @@ import { useAuth } from '../context/AuthContext';
 import { useNavigation } from '@react-navigation/native';
 import { StackNavigationProp } from '@react-navigation/stack';
 import { RootStackParamList } from '../navigation/MainNavigator';
+import { useNotificationActions } from '../components/NotificationHandler';
 
 type SettingsScreenNavigationProp = StackNavigationProp<RootStackParamList, 'Settings'>;
 
@@ -31,15 +33,29 @@ export default function SettingsScreen({ navigation }: SettingsScreenProps) {
     const [darkMode, setDarkMode] = useState(false);
     const [pushNotifications, setPushNotifications] = useState(true);
     const [fuelUnit, setFuelUnit] = useState<'Liters' | 'Gallons'>('Liters');
-    const { logout } = useAuth();
+    const { logout, user } = useAuth();
+    const { unregisterToken } = useNotificationActions();
+
+    const scrollY = React.useRef(new Animated.Value(0)).current;
+
+    React.useEffect(() => {
+        navigation.setParams({ scrollY });
+    }, []);
     const handleLogout = () => {
         Alert.alert('Logout', 'Are you sure you want to logout?', [
             { text: 'Cancel', style: 'cancel' },
             {
                 text: 'Logout',
                 style: 'destructive',
-                onPress: () => {
-                    logout();
+                onPress: async () => {
+                    if (user?.id) {
+                        try {
+                            await unregisterToken(user.id);
+                        } catch (err) {
+                            console.error("Failed to unregister notification token:", err);
+                        }
+                    }
+                    await logout();
                 },
             },
         ]);
@@ -87,10 +103,15 @@ export default function SettingsScreen({ navigation }: SettingsScreenProps) {
 
     return (
         <SafeAreaView style={styles.container}>
-            <ScrollView
+            <Animated.ScrollView
                 showsVerticalScrollIndicator={false}
                 contentContainerStyle={styles.scrollContent}
                 scrollEnabled={true}
+                onScroll={Animated.event(
+                    [{ nativeEvent: { contentOffset: { y: scrollY } } }],
+                    { useNativeDriver: false }
+                )}
+                scrollEventThrottle={16}
             >
 
                 {/* Account Section */}
@@ -233,7 +254,7 @@ export default function SettingsScreen({ navigation }: SettingsScreenProps) {
                 </View>
 
                 <View style={{ height: 20 }} />
-            </ScrollView>
+            </Animated.ScrollView>
         </SafeAreaView>
     );
 }

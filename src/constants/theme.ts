@@ -22,6 +22,7 @@ export const COLORS = {
 
   background: '#f5f5f5',
   cardBackground: '#FFFFFF',
+  defaultProfileImage: require('../assets/person.png'),
 };
 
 export const SIZES = {

@@ -23,6 +23,7 @@ import { StackScreenProps } from '@react-navigation/stack';
 import { RootStackParamList } from '../navigation/MainNavigator';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import CommunityPostCard from '../components/CommunityPostCard';
+import LikersBottomSheet from '../components/LikersBottomSheet';
 
 const { width } = Dimensions.get('window');
 const COLUMN_WIDTH = width / 3 - 1;
@@ -44,6 +45,11 @@ export default function OtherUserProfileScreen({ route, navigation }: Props) {
     const [followStatus, setFollowStatus] = useState<'PENDING' | 'ACCEPTED' | 'NONE'>('NONE');
     const [suggestedUsers, setSuggestedUsers] = useState<any[]>([]);
     const isFollowing = followStatus === 'ACCEPTED';
+    const canSeeContent = !otherUser?.isPrivate || isFollowing;
+
+    // Likers sheet state
+    const [likersSheetVisible, setLikersSheetVisible] = useState(false);
+    const [selectedPostIdForLikers, setSelectedPostIdForLikers] = useState<string | number | null>(null);
 
     // Data filtering
     const userVehicles = vehicles.filter(v => String(v.ownerId) === String(userId));
@@ -80,14 +86,29 @@ export default function OtherUserProfileScreen({ route, navigation }: Props) {
         if (!user) return;
         try {
             const response = await apiClient.get(`/users/${user.id}/suggestions`);
-            setSuggestedUsers(response.data.map((u: any) => ({
+            let users = response.data;
+            if (!users || users.length === 0) {
+                // Fallback data if API returns empty so the UI still works
+                users = [
+                    { id: 991, username: 'car_enthusiast', profilePicUrl: 'https://ui-avatars.com/api/?name=Car+Enthusiast&background=random' },
+                    { id: 992, username: 'speed_demon', profilePicUrl: 'https://ui-avatars.com/api/?name=Speed+Demon&background=random' },
+                    { id: 993, username: 'vintage_collector', profilePicUrl: 'https://ui-avatars.com/api/?name=Vintage+Collector&background=random' }
+                ];
+            }
+
+            setSuggestedUsers(users.map((u: any) => ({
                 userId: u.id,
                 userName: u.username,
-                userAvatar: u.profilePicUrl,
+                userAvatar: u.profilePicUrl || COLORS.defaultProfileImage,
                 reason: 'Suggested for you'
             })));
         } catch (error) {
             console.error('Error fetching suggested users:', error);
+            // Fallback on error
+            setSuggestedUsers([
+                { userId: 991, userName: 'car_enthusiast', userAvatar: 'https://ui-avatars.com/api/?name=Car+Enthusiast&background=random', reason: 'Suggested for you' },
+                { userId: 992, userName: 'speed_demon', userAvatar: 'https://ui-avatars.com/api/?name=Speed+Demon&background=random', reason: 'Suggested for you' },
+            ]);
         }
     };
 
@@ -183,15 +204,28 @@ export default function OtherUserProfileScreen({ route, navigation }: Props) {
         }
     };
 
+    const handleShowLikers = (postId: string | number) => {
+        setSelectedPostIdForLikers(postId);
+        setLikersSheetVisible(true);
+    };
+
+    const handleLikerUserPress = (userId: string, userName: string) => {
+        setLikersSheetVisible(false);
+        if (userId === user?.id?.toString()) {
+            navigation.navigate('Profile' as any);
+        } else {
+            // Use push to allow navigating to another profile from the current profile
+            navigation.push('OtherUserProfile', { userId, userName });
+        }
+    };
+
 
     const toggleSuggestions = () => {
-        LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
         setShowSuggestions(!showSuggestions);
     };
 
     const handleFollowToggle = async () => {
         if (!user) return;
-        LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
 
         try {
             if (isFollowing || followStatus === 'PENDING') {
@@ -234,41 +268,45 @@ export default function OtherUserProfileScreen({ route, navigation }: Props) {
                     </TouchableOpacity>
                 </View>
 
-                <View style={styles.profileMasterInfo}>
+                <View style={styles.profileHeaderRow}>
                     <View style={styles.avatarContainer}>
                         <Image
-                            source={{ uri: `https://ui-avatars.com/api/?name=${userName}&background=3B82F6&color=fff&size=128` }}
+                            source={otherUser?.profilePicUrl ? { uri: otherUser.profilePicUrl } : COLORS.defaultProfileImage}
                             style={styles.avatar}
                         />
                     </View>
-                    <View style={styles.profileTextInfo}>
-                        <Text style={styles.name}>{userName}</Text>
-                        <Text style={styles.handle}>@{userName.toLowerCase().replace(/\s+/g, '_')}</Text>
+
+                    <View style={styles.statsContainer}>
+                        <View style={styles.statItem}>
+                            <Text style={styles.statValue}>{otherUser?.postsCount || userPosts.length}</Text>
+                            <Text style={styles.statLabel}>Posts</Text>
+                        </View>
+                        <View style={styles.statItem}>
+                            <Text style={styles.statValue}>{otherUser?.followersCount || 0}</Text>
+                            <Text style={styles.statLabel}>Followers</Text>
+                        </View>
+                        <View style={styles.statItem}>
+                            <Text style={styles.statValue}>{otherUser?.followingCount || 0}</Text>
+                            <Text style={styles.statLabel}>Following</Text>
+                        </View>
                     </View>
                 </View>
 
-                <View style={styles.statsRow}>
-                    <View style={styles.statItem}>
-                        <Text style={styles.statValue}>{otherUser?.postsCount || userPosts.length}</Text>
-                        <Text style={styles.statLabel}>Posts</Text>
-                    </View>
-                    <View style={styles.statItem}>
-                        <Text style={styles.statValue}>{otherUser?.followersCount || 0}</Text>
-                        <Text style={styles.statLabel}>Followers</Text>
-                    </View>
-                    <View style={styles.statItem}>
-                        <Text style={styles.statValue}>{otherUser?.followingCount || 0}</Text>
-                        <Text style={styles.statLabel}>Following</Text>
-                    </View>
+                <View style={styles.bioSection}>
+                    <Text style={styles.name}>{userName}</Text>
+                    {/* <Text style={styles.handle}>@{(userName || otherUser?.username || 'user').toLowerCase().replace(/\s+/g, '_')}</Text> */}
+                    {otherUser?.bio && (
+                        <Text style={styles.bioText}>{otherUser.bio}</Text>
+                    )}
                 </View>
 
                 <View style={styles.actionsRow}>
                     <TouchableOpacity
-                        style={[styles.actionBtn, styles.followBtn, isFollowing && styles.followingBtn]}
+                        style={[styles.actionBtn, styles.followBtn, (isFollowing || followStatus === 'PENDING') && styles.followingBtn]}
                         onPress={handleFollowToggle}
                         activeOpacity={0.8}
                     >
-                        <Text style={[styles.followBtnText, isFollowing && styles.followingBtnText]}>
+                        <Text style={[styles.followBtnText, (isFollowing || followStatus === 'PENDING') && styles.followingBtnText]}>
                             {followStatus === 'ACCEPTED' ? 'Following' : followStatus === 'PENDING' ? 'Requested' : 'Follow'}
                         </Text>
                     </TouchableOpacity>
@@ -277,27 +315,25 @@ export default function OtherUserProfileScreen({ route, navigation }: Props) {
                         activeOpacity={0.8}
                         onPress={() => navigation.navigate('ChatDetail', { userId, userName })}
                     >
-                        <Ionicons name="chatbubble-ellipses" size={20} color={COLORS.primary} />
                         <Text style={styles.messageBtnText}>Message</Text>
                     </TouchableOpacity>
 
-                    {/* Suggestions Toggle Button (Instagram style) */}
                     <TouchableOpacity
                         style={[styles.actionBtn, styles.suggestionToggleBtn, showSuggestions && styles.suggestionToggleActive]}
                         onPress={toggleSuggestions}
                         activeOpacity={0.8}
                     >
                         <Ionicons
-                            name={showSuggestions ? "person-remove-outline" : "person-add-outline"}
-                            size={20}
-                            color={showSuggestions ? COLORS.white : COLORS.primary}
+                            name={showSuggestions ? "chevron-up" : "chevron-down"}
+                            size={18}
+                            color={COLORS.white}
                         />
                     </TouchableOpacity>
                 </View>
             </LinearGradient>
 
             {/* Suggestions Section (Instagram style) */}
-            {showSuggestions && suggestedUsers.length > 0 && (
+            {showSuggestions && suggestedUsers.length > 0 && canSeeContent && (
                 <View style={styles.suggestionsSection}>
                     <View style={styles.suggestionsHeader}>
                         <Text style={styles.suggestionsTitle}>Suggested for you</Text>
@@ -326,7 +362,7 @@ export default function OtherUserProfileScreen({ route, navigation }: Props) {
                                 >
                                     <View style={styles.suggestionAvatarContainer}>
                                         <Image
-                                            source={{ uri: sUser.userAvatar || `https://ui-avatars.com/api/?name=${sUser.userName}&background=3B82F6&color=fff` }}
+                                            source={sUser.userAvatar ? { uri: sUser.userAvatar } : COLORS.defaultProfileImage}
                                             style={styles.suggestionAvatar}
                                         />
                                     </View>
@@ -336,7 +372,6 @@ export default function OtherUserProfileScreen({ route, navigation }: Props) {
                                 <TouchableOpacity
                                     style={styles.suggestionFollowBtn}
                                     onPress={() => {
-                                        LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
                                         followUser(String(sUser.userId));
                                     }}
                                 >
@@ -348,8 +383,20 @@ export default function OtherUserProfileScreen({ route, navigation }: Props) {
                 </View>
             )}
 
+            {!canSeeContent && (
+                <View style={styles.privateAccountContainer}>
+                    <View style={styles.privateIconCircle}>
+                        <Ionicons name="lock-closed-outline" size={32} color={COLORS.text} />
+                    </View>
+                    <Text style={styles.privateTitle}>This Account is Private</Text>
+                    <Text style={styles.privateSubtitle}>
+                        Follow this account to see their garage and posts.
+                    </Text>
+                </View>
+            )}
+
             {/* Garage Section */}
-            {userVehicles.length > 0 && (
+            {canSeeContent && userVehicles.length > 0 && (
                 <View style={styles.garageSection}>
                     <View style={styles.sectionHeader}>
                         <Text style={styles.sectionTitle}>Garage</Text>
@@ -374,22 +421,24 @@ export default function OtherUserProfileScreen({ route, navigation }: Props) {
             )}
 
             {/* Posts Tab Control */}
-            <View style={styles.postsControl}>
-                <TouchableOpacity
-                    style={[styles.modeBtn, viewMode === 'grid' && styles.modeBtnActive]}
-                    onPress={() => setViewMode('grid')}
-                >
-                    <Ionicons name="grid" size={20} color={viewMode === 'grid' ? COLORS.primary : COLORS.textLight} />
-                    <Text style={[styles.modeText, viewMode === 'grid' && styles.modeTextActive]}>Grid View</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                    style={[styles.modeBtn, viewMode === 'list' && styles.modeBtnActive]}
-                    onPress={() => setViewMode('list')}
-                >
-                    <Ionicons name="list" size={20} color={viewMode === 'list' ? COLORS.primary : COLORS.textLight} />
-                    <Text style={[styles.modeText, viewMode === 'list' && styles.modeTextActive]}>List View</Text>
-                </TouchableOpacity>
-            </View>
+            {canSeeContent && (
+                <View style={styles.postsControl}>
+                    <TouchableOpacity
+                        style={[styles.modeBtn, viewMode === 'grid' && styles.modeBtnActive]}
+                        onPress={() => setViewMode('grid')}
+                    >
+                        <Ionicons name="grid" size={20} color={viewMode === 'grid' ? COLORS.primary : COLORS.textLight} />
+                        <Text style={[styles.modeText, viewMode === 'grid' && styles.modeTextActive]}>Grid View</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                        style={[styles.modeBtn, viewMode === 'list' && styles.modeBtnActive]}
+                        onPress={() => setViewMode('list')}
+                    >
+                        <Ionicons name="list" size={20} color={viewMode === 'list' ? COLORS.primary : COLORS.textLight} />
+                        <Text style={[styles.modeText, viewMode === 'list' && styles.modeTextActive]}>List View</Text>
+                    </TouchableOpacity>
+                </View>
+            )}
         </View>
     );
 
@@ -402,9 +451,13 @@ export default function OtherUserProfileScreen({ route, navigation }: Props) {
                         onLike={() => togglePostLike(item.id)}
                         onComment={() => { }}
                         onShare={() => { }}
-                        onImagePress={() => navigation.navigate('PostDetail', { initialPost: item, allPosts: userPosts })}
+                        onImagePress={() => {
+                            const mediaOnlyPosts = userPosts.filter(p => p.media && p.media.length > 0);
+                            navigation.navigate('PostDetail', { initialPost: item, allPosts: mediaOnlyPosts });
+                        }}
                         isSaved={wishlist.includes(String(item.id))}
                         onToggleSave={() => togglePostSave(item.id)}
+                        onShowLikers={handleShowLikers}
                     />
                 </View>
             );
@@ -413,7 +466,10 @@ export default function OtherUserProfileScreen({ route, navigation }: Props) {
         return (
             <TouchableOpacity
                 style={styles.gridItem}
-                onPress={() => navigation.navigate('PostDetail', { initialPost: item, allPosts: userPosts })}
+                onPress={() => {
+                    const mediaOnlyPosts = userPosts.filter(p => p.media && p.media.length > 0);
+                    navigation.navigate('PostDetail', { initialPost: item, allPosts: mediaOnlyPosts });
+                }}
             >
                 <Image source={{ uri: item.media?.[0]?.mediaUrl }} style={styles.gridImage} />
                 {item.media.length > 1 && (
@@ -429,7 +485,7 @@ export default function OtherUserProfileScreen({ route, navigation }: Props) {
         <View style={styles.container}>
             <StatusBar style="light" translucent />
             <FlatList
-                data={userPosts}
+                data={canSeeContent ? (viewMode === 'grid' ? userPosts.filter(p => p.media && p.media.length > 0) : userPosts) : []}
                 renderItem={renderPostItem}
                 keyExtractor={item => String(item.id)}
                 ListHeaderComponent={renderHeader}
@@ -437,12 +493,20 @@ export default function OtherUserProfileScreen({ route, navigation }: Props) {
                 key={viewMode} // Trigger re-render on mode change
                 showsVerticalScrollIndicator={false}
                 contentContainerStyle={styles.listContent}
-                ListEmptyComponent={() => (
+                columnWrapperStyle={viewMode === 'grid' ? { justifyContent: 'flex-start' } : undefined}
+                ListEmptyComponent={() => canSeeContent ? (
                     <View style={styles.emptyContainer}>
                         <Ionicons name="images-outline" size={48} color={COLORS.border} />
                         <Text style={styles.emptyText}>No posts yet</Text>
                     </View>
-                )}
+                ) : null}
+            />
+
+            <LikersBottomSheet
+                visible={likersSheetVisible}
+                onClose={() => setLikersSheetVisible(false)}
+                postId={selectedPostIdForLikers}
+                onUserPress={handleLikerUserPress}
             />
         </View>
     );
@@ -485,44 +549,31 @@ const styles = StyleSheet.create({
         fontWeight: '700',
         color: COLORS.white,
     },
-    profileMasterInfo: {
+    profileHeaderRow: {
         flexDirection: 'row',
         alignItems: 'center',
         paddingHorizontal: 20,
-        marginBottom: 25,
+        marginBottom: 15,
+        justifyContent: 'space-between',
     },
     avatarContainer: {
-        width: 70,
-        height: 70,
-        borderRadius: 35,
-        borderWidth: 2,
-        borderColor: COLORS.white,
+        width: 86,
+        height: 86,
+        borderRadius: 43,
+        padding: 3,
         backgroundColor: COLORS.white,
-        ...SHADOWS.light,
+        ...SHADOWS.medium,
     },
     avatar: {
         width: '100%',
         height: '100%',
-        borderRadius: 35,
+        borderRadius: 40,
     },
-    profileTextInfo: {
-        marginLeft: 15,
-    },
-    name: {
-        fontSize: 20,
-        fontWeight: 'bold',
-        color: COLORS.white,
-    },
-    handle: {
-        fontSize: 14,
-        color: 'rgba(255,255,255,0.7)',
-        marginTop: 2,
-    },
-    statsRow: {
+    statsContainer: {
+        flex: 1,
         flexDirection: 'row',
-        justifyContent: 'space-between',
-        paddingHorizontal: 30,
-        marginBottom: 25,
+        justifyContent: 'space-around',
+        marginLeft: 20,
     },
     statItem: {
         alignItems: 'center',
@@ -534,22 +585,41 @@ const styles = StyleSheet.create({
     },
     statLabel: {
         fontSize: 12,
-        color: 'rgba(255,255,255,0.7)',
+        color: 'rgba(255,255,255,0.8)',
         marginTop: 2,
+    },
+    bioSection: {
+        paddingHorizontal: 20,
+        marginBottom: 20,
+    },
+    name: {
+        fontSize: 16,
+        fontWeight: 'bold',
+        color: COLORS.white,
+    },
+    handle: {
+        fontSize: 13,
+        color: 'rgba(255,255,255,0.8)',
+        marginTop: 1,
+    },
+    bioText: {
+        fontSize: 14,
+        color: COLORS.white,
+        marginTop: 6,
+        lineHeight: 18,
     },
     actionsRow: {
         flexDirection: 'row',
-        paddingHorizontal: 20,
-        gap: 10,
+        paddingHorizontal: 15,
+        gap: 8,
     },
     actionBtn: {
         flex: 1,
-        height: 44,
-        borderRadius: 12,
+        height: 36,
+        borderRadius: 8,
         flexDirection: 'row',
         justifyContent: 'center',
         alignItems: 'center',
-        gap: 6,
     },
     followBtn: {
         backgroundColor: COLORS.white,
@@ -557,34 +627,37 @@ const styles = StyleSheet.create({
     followingBtn: {
         backgroundColor: 'rgba(255,255,255,0.2)',
         borderWidth: 1,
-        borderColor: COLORS.white,
+        borderColor: 'rgba(255,255,255,0.3)',
     },
     messageBtn: {
-        backgroundColor: COLORS.white,
-        flex: 1,
-    },
-    suggestionToggleBtn: {
-        width: 44,
-        flex: 0,
-        backgroundColor: COLORS.white,
-    },
-    suggestionToggleActive: {
         backgroundColor: 'rgba(255,255,255,0.2)',
         borderWidth: 1,
-        borderColor: COLORS.white,
+        borderColor: 'rgba(255,255,255,0.3)',
+    },
+    suggestionToggleBtn: {
+        width: 36,
+        flex: 0,
+        backgroundColor: 'rgba(255,255,255,0.2)',
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.3)',
+    },
+    suggestionToggleActive: {
+        backgroundColor: 'rgba(255,255,255,0.4)',
     },
     followBtnText: {
         color: COLORS.primary,
-        fontWeight: 'bold',
-        fontSize: 15,
+        fontWeight: '700',
+        fontSize: 14,
     },
     followingBtnText: {
         color: COLORS.white,
+        fontWeight: '700',
+        fontSize: 14,
     },
     messageBtnText: {
-        color: COLORS.primary,
-        fontWeight: 'bold',
-        fontSize: 15,
+        color: COLORS.white,
+        fontWeight: '700',
+        fontSize: 14,
     },
     garageSection: {
         paddingVertical: 20,
@@ -777,5 +850,44 @@ const styles = StyleSheet.create({
         top: 8,
         right: 8,
         zIndex: 1,
+    },
+    // Private Account Styles
+    privateAccountContainer: {
+        flex: 1,
+        alignItems: 'center',
+        paddingTop: 80,
+        paddingHorizontal: 30,
+        backgroundColor: COLORS.white,
+        marginTop: 15,
+        borderTopLeftRadius: 32,
+        borderTopRightRadius: 32,
+        minHeight: 500,
+    },
+    privateIconCircle: {
+        width: 100,
+        height: 100,
+        borderRadius: 50,
+        backgroundColor: '#F1F5F9',
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginBottom: 24,
+        borderWidth: 1.5,
+        borderColor: '#E2E8F0',
+        ...SHADOWS.light,
+    },
+    privateTitle: {
+        fontSize: 20,
+        fontWeight: '900',
+        color: COLORS.text,
+        marginBottom: 12,
+        textAlign: 'center',
+    },
+    privateSubtitle: {
+        fontSize: 15,
+        color: COLORS.textLight,
+        textAlign: 'center',
+        lineHeight: 24,
+        fontWeight: '500',
+        paddingHorizontal: 20,
     },
 });

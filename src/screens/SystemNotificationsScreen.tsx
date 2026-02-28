@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import {
     View,
     Text,
@@ -6,107 +6,201 @@ import {
     ScrollView,
     TouchableOpacity,
     StatusBar,
+    ActivityIndicator,
+    RefreshControl,
+    Animated,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { COLORS } from '../constants/theme';
 import { useNavigation } from '@react-navigation/native';
+import { useAuth } from '../context/AuthContext';
+import { useApp } from '../context/AppContext';
+import apiClient from '../api/apiClient';
 
-const MOCK_SYSTEM_NOTIFICATIONS = [
-    {
-        id: '1',
-        type: 'service',
-        title: 'Service Due',
-        message: 'Your Hyundai i20 is due for service in 3 days.',
-        time: '2 hours ago',
-        isRead: false,
-    },
-    {
-        id: '2',
-        type: 'insurance',
-        title: 'Insurance Expiring',
-        message: 'Your Insurance for Honda City expires on Feb 15.',
-        time: '5 hours ago',
-        isRead: false,
-    },
-    {
-        id: '3',
-        type: 'price_alert',
-        title: 'Price Drop Alert',
-        message: 'The price of Audi A4 has dropped by ₹50,000!',
-        time: '1 day ago',
-        isRead: false,
-    },
-    {
-        id: '4',
-        type: 'article',
-        title: 'New Article',
-        message: 'Top 10 Maintenance Tips for Summer 2024.',
-        time: '1 day ago',
-        isRead: true,
-    },
-    {
-        id: '5',
-        type: 'new_car',
-        title: 'New Launch',
-        message: 'The all-new Tata Curvv has been launched!',
-        time: '2 days ago',
-        isRead: true,
-    },
-];
+const formatTimeAgo = (dateStr: string) => {
+    try {
+        const date = new Date(dateStr);
+        const now = new Date();
+        const diffInSeconds = Math.floor((now.getTime() - date.getTime()) / 1000);
+
+        if (diffInSeconds < 60) return 'just now';
+        const diffInMinutes = Math.floor(diffInSeconds / 60);
+        if (diffInMinutes < 60) return `${diffInMinutes}m ago`;
+        const diffInHours = Math.floor(diffInMinutes / 60);
+        if (diffInHours < 24) return `${diffInHours}h ago`;
+        const diffInDays = Math.floor(diffInHours / 24);
+        if (diffInDays < 30) return `${diffInDays}d ago`;
+
+        return date.toLocaleDateString();
+    } catch (e) {
+        return '';
+    }
+};
 
 export default function SystemNotificationsScreen() {
     const navigation = useNavigation();
+    const { user } = useAuth();
+    const { fetchUnreadCount, AndroidToast, systemUnreadCount, setSystemUnreadCount } = useApp();
+    const [notifications, setNotifications] = useState<any[]>([]);
+    const [isLoading, setIsLoading] = useState(true);
+    const [refreshing, setRefreshing] = useState(false);
+
+    const scrollY = React.useRef(new Animated.Value(0)).current;
+
+    useEffect(() => {
+        (navigation as any).setParams({ scrollY });
+    }, []);
+
+    // Only these types are allowed in System Alerts.
+    // Client-side filter ensures social notifications never appear here,
+    // even if the backend (old version) returns unexpected types.
+    const SYSTEM_TYPES = ['NEWS_ALERT', 'INSURANCE_ALERT', 'SERVICE_ALERT', 'CAR_LAUNCH', 'SYSTEM_ALERT'];
+
+    const fetchNotifications = async () => {
+        if (!user?.id) return;
+        try {
+            const response = await apiClient.get(`/notifications/user/${user.id}?types=NEWS_ALERT,INSURANCE_ALERT,SERVICE_ALERT,CAR_LAUNCH,SYSTEM_ALERT`);
+            const all = response.data.content || [];
+            // Frontend safety filter — exclude social/community types
+            const filtered = all.filter((n: any) => SYSTEM_TYPES.includes(n.type));
+            setNotifications(filtered);
+        } catch (error) {
+            console.error('Error fetching system notifications:', error);
+            AndroidToast('Failed to load notifications', 'error');
+        } finally {
+            setIsLoading(false);
+            setRefreshing(false);
+        }
+    };
+
+    useEffect(() => {
+        fetchNotifications();
+        // Mark all as read when opening this screen if needed, 
+        // or individually when clicked. For now, let's mark all as read.
+        markAllAsRead();
+    }, [user?.id]);
+
+    const markAllAsRead = async () => {
+        if (!user?.id) return;
+        try {
+            await apiClient.post(`/notifications/mark-as-read?userId=${user.id}`);
+            fetchUnreadCount();
+        } catch (error) {
+            console.error('Error marking notifications as read:', error);
+        }
+    };
+
+    const handleNotificationPress = async (notification: any) => {
+        if (!notification.isRead) {
+            try {
+                await apiClient.post(`/notifications/${notification.id}/read`);
+                setNotifications(prev => prev.map(n => n.id === notification.id ? { ...n, isRead: true } : n));
+                setSystemUnreadCount(Math.max(0, systemUnreadCount - 1));
+                fetchUnreadCount();
+            } catch (error) {
+                console.error('Error marking single notification as read:', error);
+            }
+        }
+
+        // Navigation logic based on type
+        if (notification.type === 'NEWS_ALERT' && notification.referenceId) {
+            // Fetch news details and navigate
+            try {
+                const res = await apiClient.get(`/news-highlights/${notification.referenceId}`);
+                (navigation as any).navigate('NewsDetail', { news: res.data });
+            } catch (e) {
+                AndroidToast('News details not available');
+            }
+        } else if (notification.type === 'INSURANCE_ALERT') {
+            (navigation as any).navigate('Insurance', { vehicleId: notification.referenceId });
+        } else if (notification.type === 'SERVICE_ALERT') {
+            (navigation as any).navigate('ServiceRecords', { vehicleId: notification.referenceId });
+        } else if (notification.type === 'CAR_LAUNCH') {
+            (navigation as any).navigate('MarketDetail', { carId: notification.referenceId });
+        }
+    };
 
     const getIconName = (type: string) => {
         switch (type) {
-            case 'service': return 'construct';
-            case 'insurance': return 'shield-checkmark';
-            case 'price_alert': return 'pricetag';
-            case 'article': return 'newspaper';
-            case 'new_car': return 'car-sport';
+            case 'SERVICE_ALERT': return 'construct';
+            case 'INSURANCE_ALERT': return 'shield-checkmark';
+            case 'NEWS_ALERT': return 'newspaper';
+            case 'CAR_LAUNCH': return 'car-sport';
             default: return 'notifications';
         }
     };
 
     const getIconColor = (type: string) => {
         switch (type) {
-            case 'service': return COLORS.warning;
-            case 'insurance': return COLORS.info;
-            case 'price_alert': return COLORS.success;
-            case 'article': return COLORS.secondary;
-            case 'new_car': return COLORS.primaryDark;
+            case 'SERVICE_ALERT': return COLORS.warning;
+            case 'INSURANCE_ALERT': return COLORS.info;
+            case 'NEWS_ALERT': return COLORS.primary;
+            case 'CAR_LAUNCH': return '#10B981'; // Emerald/Green for new launch
             default: return COLORS.textLight;
         }
     };
+
+    const onRefresh = () => {
+        setRefreshing(true);
+        fetchNotifications();
+    };
+
+    if (isLoading && !refreshing) {
+        return (
+            <View style={[styles.container, styles.center]}>
+                <ActivityIndicator size="large" color={COLORS.primary} />
+            </View>
+        );
+    }
 
     return (
         <View style={styles.container}>
             <StatusBar barStyle="dark-content" />
 
-            <ScrollView style={styles.notificationList}>
-                {MOCK_SYSTEM_NOTIFICATIONS.map((notification) => (
-                    <TouchableOpacity
-                        key={notification.id}
-                        style={[
-                            styles.notificationItem,
-                            !notification.isRead && styles.notificationItemUnread,
-                        ]}
-                    >
-                        <View style={[styles.systemIconContainer, { backgroundColor: getIconColor(notification.type) + '20' }]}>
-                            <Ionicons name={getIconName(notification.type)} size={24} color={getIconColor(notification.type)} />
-                        </View>
+            <Animated.ScrollView
+                style={styles.notificationList}
+                refreshControl={
+                    <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.primary} />
+                }
+                onScroll={Animated.event(
+                    [{ nativeEvent: { contentOffset: { y: scrollY } } }],
+                    { useNativeDriver: false }
+                )}
+                scrollEventThrottle={16}
+            >
+                {notifications.length === 0 ? (
+                    <View style={styles.emptyContainer}>
+                        <Ionicons name="notifications-off-outline" size={60} color={COLORS.gray} />
+                        <Text style={styles.emptyText}>No notifications yet</Text>
+                    </View>
+                ) : (
+                    notifications.map((notification) => (
+                        <TouchableOpacity
+                            key={notification.id}
+                            style={[
+                                styles.notificationItem,
+                                !notification.isRead && styles.notificationItemUnread,
+                            ]}
+                            onPress={() => handleNotificationPress(notification)}
+                        >
+                            <View style={[styles.systemIconContainer, { backgroundColor: getIconColor(notification.type) + '20' }]}>
+                                <Ionicons name={getIconName(notification.type)} size={24} color={getIconColor(notification.type)} />
+                            </View>
 
-                        <View style={styles.notificationContent}>
-                            <Text style={styles.notificationText}>
-                                <Text style={styles.notificationUser}>{notification.title}</Text>{'\n'}
-                                {notification.message}
-                            </Text>
-                            <Text style={styles.notificationTime}>{notification.time}</Text>
-                        </View>
-                        {!notification.isRead && <View style={styles.unreadDot} />}
-                    </TouchableOpacity>
-                ))}
-            </ScrollView>
+                            <View style={styles.notificationContent}>
+                                <Text style={styles.notificationText}>
+                                    <Text style={styles.notificationUser}>{notification.title}</Text>{'\n'}
+                                    {notification.message}
+                                </Text>
+                                <Text style={styles.notificationTime}>
+                                    {notification.createdAt ? formatTimeAgo(notification.createdAt) : ''}
+                                </Text>
+                            </View>
+                            {!notification.isRead && <View style={styles.unreadDot} />}
+                        </TouchableOpacity>
+                    ))
+                )}
+            </Animated.ScrollView>
         </View>
     );
 }
@@ -161,5 +255,20 @@ const styles = StyleSheet.create({
         borderRadius: 4,
         backgroundColor: COLORS.primary,
         marginLeft: 8,
+    },
+    center: {
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    emptyContainer: {
+        flex: 1,
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingTop: 100,
+    },
+    emptyText: {
+        marginTop: 10,
+        fontSize: 16,
+        color: COLORS.gray,
     },
 });

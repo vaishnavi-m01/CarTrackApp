@@ -1,0 +1,48 @@
+{
+  "project_info": {
+    "project_number": "741995627617",
+    "project_id": "cartrackpro-163ca",
+    "storage_bucket": "cartrackpro-163ca.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:741995627617:android:c6085b730919b66d055620",
+        "android_client_info": {
+          "package_name": "com.cartrack.CarTrackApp"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCDUH68M31ymcy4r517b57-TgZOSJTQaR0"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:741995627617:android:089761af31747a0a055620",
+        "android_client_info": {
+          "package_name": "com.vaishnavim21052004.cartrackpro"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCDUH68M31ymcy4r517b57-TgZOSJTQaR0"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

@@ -13,6 +13,7 @@ import {
     ToastAndroid,
     Pressable,
     Keyboard,
+    Animated,
 } from 'react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -84,6 +85,12 @@ export default function AddVehicleScreen({ navigation, route }: { navigation: an
         mileage: editVehicle?.mileage || '',
         fuelAvg: editVehicle?.fuelAvg || '',
     });
+
+    const scrollY = React.useRef(new Animated.Value(0)).current;
+
+    useEffect(() => {
+        navigation.setParams({ scrollY } as any);
+    }, []);
 
     const [vehicleTypes, setVehicleTypes] = useState<TypeData[]>([]);
     const [fuelTypes, setFuelTypes] = useState<TypeData[]>([]);
@@ -213,7 +220,7 @@ export default function AddVehicleScreen({ navigation, route }: { navigation: an
         try {
             const payload = {
                 id: editVehicle?.id || 0,
-                userId: user?.id ? parseInt(user.id) : 0,
+                userId: user?.id ? parseInt(String(user.id)) : 0,
                 vehicleTypeId: formData.vehicleTypeId,
                 brandId: 0,
                 customBrandName: formData.brand,
@@ -296,7 +303,15 @@ export default function AddVehicleScreen({ navigation, route }: { navigation: an
             keyboardVerticalOffset={Platform.OS === 'ios' ? 80 : 0}
         >
             <View style={styles.container}>
-                <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+                <Animated.ScrollView
+                    contentContainerStyle={styles.content}
+                    showsVerticalScrollIndicator={false}
+                    onScroll={Animated.event(
+                        [{ nativeEvent: { contentOffset: { y: scrollY } } }],
+                        { useNativeDriver: false }
+                    )}
+                    scrollEventThrottle={16}
+                >
                     {/* Image Picker Section */}
                     <View style={styles.imagePickerCard}>
                         {formData.image ? (
@@ -417,19 +432,21 @@ export default function AddVehicleScreen({ navigation, route }: { navigation: an
                         </View>
                     </View>
 
-                    <View style={styles.row}>
-                        <View style={[styles.inputGroup, { flex: 1, marginRight: 10 }]}>
-                            <Text style={styles.label}>Reg No.</Text>
-                            <TextInput
-                                style={styles.input}
-                                value={formData.registration}
-                                onChangeText={(text) => setFormData({ ...formData, registration: text })}
-                                placeholder="e.g. KA 01 AB 1234"
-                                placeholderTextColor={COLORS.textExtraLight}
-                                autoCapitalize="characters"
-                            />
-                        </View>
+                    {/* <View style={styles.row}> */}
+                    <View style={[styles.inputGroup, { flex: 1, marginRight: 10 }]}>
+                        <Text style={styles.label}>Reg No.</Text>
+                        <TextInput
+                            style={styles.input}
+                            value={formData.registration}
+                            onChangeText={(text) => setFormData({ ...formData, registration: text })}
+                            placeholder="e.g. KA 01 AB 1234"
+                            placeholderTextColor={COLORS.textExtraLight}
+                            autoCapitalize="characters"
+                        />
+                    </View>
 
+
+                    <View style={styles.row}>
                         <View style={[styles.inputGroup, { flex: 1 }]}>
                             <Text style={styles.label}>Year</Text>
                             <TextInput
@@ -442,6 +459,8 @@ export default function AddVehicleScreen({ navigation, route }: { navigation: an
                             />
                         </View>
                     </View>
+
+                    {/* </View> */}
 
                     <View style={styles.inputGroup}>
                         <Text style={styles.label}>Fuel Type <Text style={styles.required}>*</Text></Text>
@@ -550,7 +569,7 @@ export default function AddVehicleScreen({ navigation, route }: { navigation: an
                         />
                     </View>
                     <View style={{ height: 120 }} />
-                </ScrollView>
+                </Animated.ScrollView>
 
                 {showPicker && (
                     <DateTimePicker
@@ -608,9 +627,9 @@ const styles = StyleSheet.create({
     required: { color: COLORS.danger, fontWeight: 'bold' },
     dateDisplay: { flexDirection: 'row', alignItems: 'center', backgroundColor: COLORS.white, padding: 14, borderRadius: 12, borderWidth: 1, borderColor: '#e2e8f0', gap: 10 },
     dateDisplayText: { fontSize: 15, color: COLORS.text, fontWeight: '500' },
-    footerContainer: { position: 'absolute', bottom: 0, left: 0, right: 0, paddingHorizontal: SIZES.padding, paddingTop: 15, backgroundColor: COLORS.white, borderTopWidth: 1, borderTopColor: '#F1F5F9', ...SHADOWS.medium },
+    footerContainer: { position: 'absolute', bottom: 0, left: 0, right: 0, paddingHorizontal: SIZES.padding, paddingTop: 15, backgroundColor: COLORS.white, borderTopWidth: 1, borderTopColor: '#F1F5F9' },
     footerInner: { flexDirection: 'row', gap: 15 },
-    submitBtnHalf: { flex: 1, borderRadius: 16, overflow: 'hidden', ...SHADOWS.medium },
+    submitBtnHalf: { flex: 1, borderRadius: 16, overflow: 'hidden' },
     submitGradient: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 16, gap: 10 },
     submitTextSmall: { fontSize: 16, fontWeight: 'bold', color: COLORS.white },
     cancelBtnSecondary: { backgroundColor: '#F1F5F9', borderWidth: 1, borderColor: '#E2E8F0', alignItems: 'center', justifyContent: 'center', shadowOpacity: 0, elevation: 0 },

@@ -1,11 +1,12 @@
 import React from 'react';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
-import { View, ActivityIndicator } from 'react-native';
+import { View, ActivityIndicator, Animated, Text } from 'react-native';
 import { createStackNavigator } from '@react-navigation/stack';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Ionicons } from '@expo/vector-icons';
-import { COLORS } from '../constants/theme';
+import { Ionicons, MaterialIcons } from '@expo/vector-icons';
+import { COLORS, SHADOWS } from '../constants/theme';
 import { NavigatorScreenParams } from '@react-navigation/native';
+import { TouchableOpacity } from 'react-native';
 // import { useAuth } from '../context/AuthContext';
 
 // Auth Screens
@@ -59,6 +60,8 @@ import MessagesScreen from '../screens/MessagesScreen';
 import ChatDetailScreen from '../screens/ChatDetailScreen';
 import SystemNotificationsScreen from '../screens/SystemNotificationsScreen';
 import CommunityNotificationsScreen from '../screens/CommunityNotificationsScreen';
+import FollowersScreen from '../screens/FollowersScreen';
+import DiscoverPeopleScreen from '../screens/DiscoverPeopleScreen';
 
 
 export type RootTabParamList = {
@@ -110,10 +113,12 @@ export type RootStackParamList = {
     CreatePost: undefined;
     AddStory: undefined;
     StoryViewer: {
-        storyGroup: StoryGroup;
-        allGroups: StoryGroup[];
-        startIndex: number;
+        storyGroup?: StoryGroup;
+        allGroups?: StoryGroup[];
+        startIndex?: number;
+        storyId?: string;
         onUpdateStoryLike?: (storyId: string | number, isLiked: boolean, likesCount: number) => void;
+        onClose?: () => void;
     };
     News: undefined;
     NewsDetail: { news: any };
@@ -121,39 +126,106 @@ export type RootStackParamList = {
     EditProfile: undefined;
     PostDetail: { initialPost: CommunityPost; allPosts: CommunityPost[] };
     Messages: undefined;
-    ChatDetail: { userId: string; userName: string; userImage?: string };
+    ChatDetail: { userId: string; userName: string; userImage?: string; initialMessage?: string };
     SystemNotifications: { filter: 'system' };
     CommunityNotifications: { filter: 'community' };
     OtherUserProfile: { userId: string; userName: string };
+    Followers: { userId: string | number; type: 'followers' | 'following' };
+    NewMessage: undefined;
     Reports: { vehicleId?: string };
     DocumentDetail: { document: VehicleDocument };
+    DiscoverPeople: undefined;
+};
+
+const TabBarItem = ({ route, focused, color }: { route: string, focused: boolean, color: string }) => {
+    const animation = React.useRef(new Animated.Value(focused ? 1 : 0)).current;
+
+    React.useEffect(() => {
+        Animated.timing(animation, {
+            toValue: focused ? 1 : 0,
+            duration: 150,
+            useNativeDriver: true,
+        }).start();
+    }, [focused]);
+
+    const translateY = animation.interpolate({
+        inputRange: [0, 1],
+        outputRange: [5, 0]
+    });
+
+    const opacity = animation.interpolate({
+        inputRange: [0, 0.5, 1],
+        outputRange: [0, 0, 1]
+    });
+
+    const labelTranslateY = animation.interpolate({
+        inputRange: [0, 1],
+        outputRange: [8, 0]
+    });
+
+    let iconName: keyof typeof Ionicons.glyphMap = 'home';
+    let label = '';
+
+    if (route === 'Home') {
+        iconName = focused ? 'home' : 'home-outline';
+        label = 'Home';
+    } else if (route === 'Market') {
+        iconName = focused ? 'car' : 'car-outline';
+        label = 'Market';
+    } else if (route === 'Expenses') {
+        iconName = focused ? 'receipt' : 'receipt-outline';
+        label = 'Expenses';
+    } else if (route === 'Community') {
+        iconName = focused ? 'people' : 'people-outline';
+        label = 'Community';
+    } else if (route === 'Profile') {
+        iconName = focused ? 'person' : 'person-outline';
+        label = 'Profile';
+    }
+
+    return (
+        <View style={{
+            alignItems: 'center',
+            justifyContent: 'center',
+            height: '100%',
+            width: 70,
+            paddingTop: 10
+        }}>
+            <Animated.View style={{ transform: [{ translateY }] }}>
+                <Ionicons name={iconName} size={24} color={color} />
+            </Animated.View>
+            <Animated.View style={{
+                opacity,
+                transform: [{ translateY: labelTranslateY }],
+                marginTop: 2,
+                height: 14,
+                justifyContent: 'center'
+            }}>
+                <Text style={{
+                    fontSize: 10,
+                    fontWeight: 'bold',
+                    color,
+                    textAlign: 'center'
+                }}>
+                    {label}
+                </Text>
+            </Animated.View>
+        </View>
+    );
 };
 
 // Main Tab Navigator
 function TabNavigator() {
     const insets = useSafeAreaInsets();
+    // unreadCount removed as it's handled in individual screens
 
     return (
         <Tab.Navigator
             screenOptions={({ route }) => ({
                 headerShown: false,
-                tabBarIcon: ({ focused, color, size }) => {
-                    let iconName: keyof typeof Ionicons.glyphMap = 'home';
-
-                    if (route.name === 'Home') {
-                        iconName = focused ? 'home' : 'home-outline';
-                    } else if (route.name === 'Market') {
-                        iconName = focused ? 'car' : 'car-outline';
-                    } else if (route.name === 'Expenses') {
-                        iconName = focused ? 'receipt' : 'receipt-outline';
-                    } else if (route.name === 'Community') {
-                        iconName = focused ? 'people' : 'people-outline';
-                    } else if (route.name === 'Profile') {
-                        iconName = focused ? 'person' : 'person-outline';
-                    }
-
-                    return <Ionicons name={iconName} size={size} color={color} />;
-                },
+                tabBarIcon: ({ focused, color }) => (
+                    <TabBarItem route={route.name} focused={focused} color={color} />
+                ),
                 tabBarActiveTintColor: COLORS.primary,
                 tabBarInactiveTintColor: COLORS.gray,
                 tabBarStyle: {
@@ -168,17 +240,16 @@ function TabNavigator() {
                     shadowOpacity: 0.1,
                     shadowRadius: 4,
                 },
-                tabBarLabelStyle: {
-                    fontSize: 12,
-                    fontWeight: '600',
-                    marginBottom: insets.bottom > 0 ? 0 : 5,
-                },
+                tabBarShowLabel: false,
             })}
         >
             <Tab.Screen name="Home" component={HomeScreen} />
             <Tab.Screen name="Market" component={MarketScreen} />
             <Tab.Screen name="Expenses" component={ExpensesScreen} />
-            <Tab.Screen name="Community" component={CommunityScreen} />
+            <Tab.Screen
+                name="Community"
+                component={CommunityScreen}
+            />
             <Tab.Screen name="Profile" component={ProfileScreen} />
         </Tab.Navigator>
     );
@@ -207,7 +278,12 @@ export default function MainNavigator() {
                     <StackHeader
                         title={props.options.title || props.route.name}
                         subtitle={(props.options as any).headerSubtitle}
-                        headerRight={(props.options as any).headerRight}
+                        headerRight={(props.options as any).headerRight || (props.route.params as any)?.headerRight}
+                        scrollY={(props.options as any).scrollY || (props.route.params as any)?.scrollY}
+                        showSearch={(props.options as any).showSearch || (props.route.params as any)?.showSearch}
+                        searchQuery={(props.options as any).searchQuery || (props.route.params as any)?.searchQuery}
+                        onSearchChange={(props.options as any).onSearchChange || (props.route.params as any)?.onSearchChange}
+                        onSearchClose={(props.options as any).onSearchClose || (props.route.params as any)?.onSearchClose}
                     />
                 ),
             }}
@@ -228,14 +304,60 @@ export default function MainNavigator() {
                 // App Stack
                 <>
                     <Stack.Screen name="MainTabs" component={TabNavigator} options={{ headerShown: false }} />
-                    <Stack.Screen name="VehicleDetails" component={VehicleDetailsScreen} options={{ headerShown: false }} />
-                    <Stack.Screen name="Comparison" component={ComparisonScreen} options={{ title: 'Compare Vehicles' }} />
-                    <Stack.Screen name="LoanCalculator" component={LoanCalculatorScreen} options={{ title: 'Loan Calculator' }} />
-                    <Stack.Screen name="AddVehicle" component={AddVehicleScreen} options={{ title: 'Add New Vehicle' }} />
-                    <Stack.Screen name="AddFuel" component={AddFuelScreen} options={{ title: 'Add Fuel Log' }} />
-                    <Stack.Screen name="AddExpense" component={AddExpenseScreen} options={{ title: 'Add Expense' }} />
-                    <Stack.Screen name="MyVehicles" component={MyVehiclesScreen} options={{ title: 'My Vehicles' }} />
-                    <Stack.Screen name="VehicleLogs" component={VehicleLogsScreen} options={{ title: 'Vehicle Logs' }} />
+                    <Stack.Screen
+                        name="VehicleDetails"
+                        component={VehicleDetailsScreen}
+                        options={({ route, navigation }: any) => {
+                            const vehicle = route.params?.vehicle || vehicles.find(v => v.id === route.params?.id);
+                            return {
+                                headerShown: false,
+                                title: vehicle ? `${vehicle.brand} ${vehicle.model}` : 'Vehicle Details',
+                                headerSubtitle: vehicle ? vehicle.registration : undefined,
+                                headerRight: () => (
+                                    <TouchableOpacity
+                                        style={{ marginRight: 15 }}
+                                        onPress={() => (navigation as any).navigate('AddVehicle', { vehicle })}
+                                    >
+                                        <MaterialIcons name="edit" size={22} color={COLORS.white} />
+                                    </TouchableOpacity>
+                                ),
+                                scrollY: route.params?.scrollY
+                            } as any;
+                        }}
+                    />
+                    <Stack.Screen
+                        name="Comparison"
+                        component={ComparisonScreen}
+                        options={({ route }: any) => ({
+                            headerShown: true,
+                            title: 'Compare Vehicles',
+                            headerBackTitleVisible: false,
+                            scrollY: route.params?.scrollY,
+                            headerRight: () => (
+                                <TouchableOpacity
+                                    onPress={() => route.params?.handleExport?.()}
+                                    style={{ marginRight: 15 }}
+                                >
+                                    <Ionicons name="download-outline" size={24} color={COLORS.primary} />
+                                </TouchableOpacity>
+                            )
+                        }) as any}
+                    />
+                    <Stack.Screen name="LoanCalculator" component={LoanCalculatorScreen} options={({ route }: any) => ({ headerShown: true, title: 'Loan Calculator', headerBackTitleVisible: false, scrollY: route.params?.scrollY }) as any} />
+                    <Stack.Screen name="AddVehicle" component={AddVehicleScreen} options={({ route }: any) => ({ title: 'Add New Vehicle', scrollY: route.params?.scrollY }) as any} />
+                    <Stack.Screen name="AddFuel" component={AddFuelScreen} options={({ route }: any) => ({ title: 'Add Fuel Log', scrollY: route.params?.scrollY }) as any} />
+                    <Stack.Screen name="AddExpense" component={AddExpenseScreen} options={({ route }: any) => ({ title: 'Add Expense', scrollY: route.params?.scrollY }) as any} />
+                    <Stack.Screen
+                        name="MyVehicles"
+                        component={MyVehiclesScreen}
+                        options={({ route }: any) => ({
+                            headerShown: true,
+                            title: 'My Garage',
+                            headerSubtitle: 'Manage your personal fleet',
+                            scrollY: route.params?.scrollY
+                        }) as any}
+                    />
+                    <Stack.Screen name="VehicleLogs" component={VehicleLogsScreen} options={({ route }: any) => ({ headerShown: true, title: 'Vehicle Logs', headerBackTitleVisible: false, scrollY: route.params?.scrollY }) as any} />
                     <Stack.Screen
                         name="VehicleDocuments"
                         component={VehicleDocumentsScreen}
@@ -243,13 +365,14 @@ export default function MainNavigator() {
                             const vehicleId = route.params?.vehicleId;
                             const vehicle = vehicles.find(v => v.id === vehicleId);
                             return {
-                                title: 'Vehicle Documents',
-                                headerSubtitle: vehicle ? `${vehicle.brand} ${vehicle.model} • ${vehicle.registration}` : undefined
+                                title: 'Documents',
+                                headerSubtitle: vehicle ? `${vehicle.brand} ${vehicle.model} • ${vehicle.registration}` : undefined,
+                                scrollY: route.params?.scrollY
                             } as any;
                         }}
                     />
-                    <Stack.Screen name="AddDocument" component={AddDocumentScreen} options={{ title: 'Add Document' }} />
-                    <Stack.Screen name="ExpenseHistory" component={ExpenseHistoryScreen} options={{ headerShown: true }} />
+                    <Stack.Screen name="AddDocument" component={AddDocumentScreen} options={({ route }: any) => ({ headerShown: true, title: 'Add Document', headerBackTitleVisible: false, scrollY: route.params?.scrollY }) as any} />
+                    <Stack.Screen name="ExpenseHistory" component={ExpenseHistoryScreen} options={({ route }: any) => ({ headerShown: true, title: 'Expense History', scrollY: route.params?.scrollY }) as any} />
                     {/* <Stack.Screen name="Gallery" component={GalleryScreen} options={{ title: 'Gallery' }} /> */}
                     <Stack.Screen
                         name="Trips"
@@ -258,13 +381,14 @@ export default function MainNavigator() {
                             const vehicleId = route.params?.vehicleId;
                             const vehicle = vehicles.find(v => v.id === vehicleId);
                             return {
-                                title: 'My Trips',
-                                headerSubtitle: vehicle ? `${vehicle.brand} ${vehicle.model} • ${vehicle.registration}` : undefined
+                                title: 'Trips History',
+                                headerSubtitle: vehicle ? `${vehicle.brand} ${vehicle.model} • ${vehicle.registration}` : undefined,
+                                scrollY: route.params?.scrollY
                             } as any;
                         }}
                     />
-                    <Stack.Screen name="AddTrip" component={AddTripScreen} options={{ title: 'Start New Trip' }} />
-                    <Stack.Screen name="RenewInsurance" component={RenewInsuranceScreen} options={{ title: 'Renew Policy' }} />
+                    <Stack.Screen name="AddTrip" component={AddTripScreen} options={({ route }: any) => ({ title: 'Start New Trip', scrollY: route.params?.scrollY }) as any} />
+                    <Stack.Screen name="RenewInsurance" component={RenewInsuranceScreen} options={({ route }: any) => ({ title: 'Renew Policy', scrollY: route.params?.scrollY }) as any} />
                     <Stack.Screen
                         name="Insurance"
                         component={InsuranceScreen}
@@ -273,7 +397,8 @@ export default function MainNavigator() {
                             const vehicle = vehicles.find(v => v.id === vehicleId);
                             return {
                                 title: 'Insurance',
-                                headerSubtitle: vehicle ? `${vehicle.brand} ${vehicle.model} • ${vehicle.registration}` : undefined
+                                headerSubtitle: vehicle ? `${vehicle.brand} ${vehicle.model} • ${vehicle.registration}` : undefined,
+                                scrollY: route.params?.scrollY
                             } as any;
                         }}
                     />
@@ -285,50 +410,112 @@ export default function MainNavigator() {
                             const vehicle = vehicles.find(v => v.id === vehicleId);
                             return {
                                 title: 'Service Records',
-                                headerSubtitle: vehicle ? `${vehicle.brand} ${vehicle.model} • ${vehicle.registration}` : undefined
+                                headerSubtitle: vehicle ? `${vehicle.brand} ${vehicle.model} • ${vehicle.registration}` : undefined,
+                                scrollY: route.params?.scrollY
                             } as any;
                         }}
                     />
-                    <Stack.Screen name="AddService" component={AddServiceScreen} options={{ title: 'Log Service' }} />
+                    <Stack.Screen name="AddService" component={AddServiceScreen} options={({ route }: any) => ({ title: 'Log Service', scrollY: route.params?.scrollY }) as any} />
                     <Stack.Screen name="VehicleSpec" component={VehicleSpecScreen} options={{ headerShown: false }} />
-                    <Stack.Screen name="Wishlist" component={WishlistScreen} options={{ headerShown: true, title: 'Wishlist', headerSubtitle: 'Your favorite cars' } as any} />
-                    <Stack.Screen name="CreatePost" component={CreatePostScreen} options={{ headerShown: true, title: 'Create Post', headerBackTitleVisible: false }} />
-                    <Stack.Screen name="AddStory" component={AddStoryScreen} options={{ headerShown: true, title: 'Add Story', headerBackTitleVisible: false }} />
+                    <Stack.Screen
+                        name="Wishlist"
+                        component={WishlistScreen}
+                        options={({ route }: any) => ({
+                            headerShown: true,
+                            title: 'Wishlist',
+                            headerSubtitle: 'Your favorite cars',
+                            scrollY: route.params?.scrollY
+                        }) as any}
+                    />
+                    <Stack.Screen name="CreatePost" component={CreatePostScreen} options={({ route }: any) => ({ headerShown: true, title: 'Create Post', headerBackTitleVisible: false, scrollY: route.params?.scrollY }) as any} />
+                    <Stack.Screen name="AddStory" component={AddStoryScreen} options={({ route }: any) => ({ headerShown: true, title: 'Add Story', headerBackTitleVisible: false, scrollY: route.params?.scrollY }) as any} />
                     <Stack.Screen name="StoryViewer" component={StoryViewerScreen} options={{ headerShown: false, presentation: 'modal', cardStyle: { backgroundColor: 'transparent' }, cardOverlayEnabled: true, cardStyleInterpolator: ({ current: { progress } }) => ({ cardStyle: { opacity: progress, }, }), }} />
-                    <Stack.Screen name="News" component={NewsScreen} options={{ headerShown: true, title: 'Auto News', headerSubtitle: 'Stay updated with latest automotive news' } as any} />
+                    <Stack.Screen name="News" component={NewsScreen} options={({ route }: any) => ({ title: 'Auto News', scrollY: route.params?.scrollY }) as any} />
                     <Stack.Screen name="NewsDetail" component={NewsDetailScreen} options={{ headerShown: false }} />
-                    <Stack.Screen name="Settings" component={SettingsScreen} options={{ headerShown: true, title: 'Settings', headerSubtitle: 'Manage your preferences' } as any} />
-                    <Stack.Screen name="EditProfile" component={EditProfileScreen} options={{ headerShown: true, title: 'Edit Profile' }} />
-                    <Stack.Screen name="PostDetail" component={PostDetailScreen} options={{ headerShown: false, animationEnabled: false }} />
-                    <Stack.Screen name="Messages" component={MessagesScreen} options={{ headerShown: true, title: 'Messages' }} />
+                    <Stack.Screen
+                        name="Settings"
+                        component={SettingsScreen}
+                        options={({ route }: any) => ({
+                            headerShown: true,
+                            title: 'Settings',
+                            headerSubtitle: 'Manage your preferences',
+                            scrollY: route.params?.scrollY
+                        }) as any}
+                    />
+                    <Stack.Screen
+                        name="EditProfile"
+                        component={EditProfileScreen}
+                        options={({ route }: any) => ({
+                            headerShown: true,
+                            title: 'Edit Profile',
+                            scrollY: route.params?.scrollY
+                        }) as any}
+                    />
+                    <Stack.Screen
+                        name="PostDetail"
+                        component={PostDetailScreen}
+                        options={({ route }: any) => ({
+                            headerShown: false,
+                            title: 'Post',
+                            scrollY: route.params?.scrollY
+                        }) as any}
+                    />
+                    <Stack.Screen name="Messages" component={MessagesScreen} options={({ route }: any) => ({ headerShown: true, title: 'Messages', scrollY: route.params?.scrollY }) as any} />
                     <Stack.Screen
                         name="ChatDetail"
                         component={ChatDetailScreen}
                         options={({ route }: any) => ({
                             headerShown: true,
                             title: route.params?.userName || 'Chat',
-                            headerSubtitle: 'Online'
+                            headerSubtitle: 'Online',
+                            scrollY: route.params?.scrollY
                         }) as any}
                     />
                     <Stack.Screen
                         name="SystemNotifications"
                         component={SystemNotificationsScreen}
-                        options={{ headerShown: true, title: 'System Alerts' }}
+                        options={({ route }: any) => ({
+                            headerShown: true,
+                            title: 'System Alerts',
+                            scrollY: route.params?.scrollY
+                        }) as any}
                     />
                     <Stack.Screen
                         name="CommunityNotifications"
                         component={CommunityNotificationsScreen}
-                        options={{ headerShown: true, title: 'Community Activity' }}
+                        options={({ route }: any) => ({
+                            headerShown: true,
+                            title: 'Community Activity',
+                            scrollY: route.params?.scrollY
+                        }) as any}
                     />
                     <Stack.Screen
                         name="OtherUserProfile"
                         component={OtherUserProfileScreen}
-                        options={{ headerShown: false }}
+                        options={({ route }: any) => ({
+                            headerShown: false,
+                            title: route.params?.userName || 'Profile',
+                            scrollY: route.params?.scrollY
+                        }) as any}
                     />
+                    <Stack.Screen
+                        name="Followers"
+                        component={FollowersScreen}
+                        options={({ route }: any) => ({
+                            headerShown: true,
+                            title: route.params?.type === 'followers' ? 'Followers' : 'Following',
+                            scrollY: route.params?.scrollY
+                        }) as any}
+                    />
+
                     <Stack.Screen
                         name="Reports"
                         component={ReportsScreen}
-                        options={{ title: 'Vehicle Analytics' }}
+                        options={({ route }: any) => ({
+                            headerShown: true,
+                            title: 'Vehicle Analytics',
+                            scrollY: route.params?.scrollY
+                        }) as any}
                     />
                     <Stack.Screen
                         name="DocumentDetail"
@@ -336,6 +523,15 @@ export default function MainNavigator() {
                         options={({ route }: any) => ({
                             title: route.params?.document?.title || 'Document Details'
                         })}
+                    />
+                    <Stack.Screen
+                        name="DiscoverPeople"
+                        component={DiscoverPeopleScreen}
+                        options={({ route }: any) => ({
+                            headerShown: true,
+                            title: 'Discover People',
+                            scrollY: route.params?.scrollY
+                        }) as any}
                     />
                 </>
             )}

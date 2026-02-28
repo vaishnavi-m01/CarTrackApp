@@ -9,9 +9,11 @@ import {
     Dimensions,
     Platform,
     Alert,
+    ActivityIndicator,
+    ToastAndroid,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { Ionicons } from '@expo/vector-icons';
+import { Ionicons, MaterialIcons } from '@expo/vector-icons';
 import { StatusBar } from 'expo-status-bar';
 import * as ImagePicker from 'expo-image-picker';
 import { COLORS, SIZES, SHADOWS } from '../constants/theme';
@@ -24,7 +26,7 @@ import { CompositeNavigationProp } from '@react-navigation/native';
 import { StackNavigationProp } from '@react-navigation/stack';
 import { RootTabParamList, RootStackParamList } from '../navigation/MainNavigator';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import UsersBottomSheet from '../components/UsersBottomSheet';
+import CommunityPostCard from '../components/CommunityPostCard';
 
 const { width } = Dimensions.get('window');
 
@@ -42,14 +44,14 @@ export default function ProfileScreen({ navigation }: ProfileScreenProps) {
     const { user } = useAuth();
     const insets = useSafeAreaInsets();
     const [avatarImage, setAvatarImage] = useState<string | null>(null);
-    const [usersSheetVisible, setUsersSheetVisible] = useState(false);
-    const [usersSheetType, setUsersSheetType] = useState<'followers' | 'following'>('followers');
-    const [activeTab, setActiveTab] = useState<'posts' | 'saved'>('posts');
+    const [activeTab, setActiveTab] = useState<'media' | 'content' | 'savedMedia' | 'savedContent'>('media');
     const [userPosts, setUserPosts] = useState<CommunityPost[]>([]);
     const [savedPosts, setSavedPosts] = useState<CommunityPost[]>([]);
     const [userProfile, setUserProfile] = useState<any>(null);
     const [isLoading, setIsLoading] = useState(true);
     const [isProfileLoading, setIsProfileLoading] = useState(false);
+
+    const [isUploading, setIsUploading] = useState(false);
 
     const pickImage = async () => {
         const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -65,8 +67,38 @@ export default function ProfileScreen({ navigation }: ProfileScreenProps) {
             quality: 0.8,
         });
 
-        if (!result.canceled) {
-            setAvatarImage(result.assets[0].uri);
+        if (!result.canceled && user) {
+            const asset = result.assets[0];
+            setAvatarImage(asset.uri); // Show immediately (optimistic update)
+
+            // Auto-upload to API: POST /users/{id}/upload-profile-pic
+            setIsUploading(true);
+            try {
+                const formData = new FormData();
+                formData.append('file', {
+                    uri: asset.uri,
+                    name: asset.fileName || 'profile.jpg',
+                    type: asset.mimeType || 'image/jpeg',
+                } as any);
+
+                await apiClient.post(`/users/${user.id}/upload-profile-pic`, formData, {
+                    headers: { 'Content-Type': 'multipart/form-data' },
+                });
+
+                // Refresh profile so the header shows the new image
+                await fetchUserProfile();
+                if (Platform.OS === 'android') {
+                    ToastAndroid.show('Profile picture updated!', ToastAndroid.SHORT);
+                } else {
+                    Alert.alert('✅ Success', 'Profile picture updated!');
+                }
+            } catch (error) {
+                console.error('Failed to upload profile picture:', error);
+                Alert.alert('Upload Failed', 'Could not update your profile picture. Please try again.');
+                setAvatarImage(null); // Revert optimistic update on failure
+            } finally {
+                setIsUploading(false);
+            }
         }
     };
 
@@ -115,7 +147,7 @@ export default function ProfileScreen({ navigation }: ProfileScreenProps) {
 
     const mapPosts = (posts: any[]): CommunityPost[] => {
         return posts.map(dto => {
-            const post = dto.post || dto; // Handle both direct entities and DTOs if mixed
+            const post = dto.post || dto;
             return {
                 id: post.id,
                 userId: post.userId,
@@ -158,7 +190,58 @@ export default function ProfileScreen({ navigation }: ProfileScreenProps) {
         });
     };
 
-    const displayPosts = activeTab === 'posts' ? userPosts : savedPosts;
+    const userMediaPosts = userPosts.filter(p => p.media && p.media.length > 0);
+    const userContentPosts = userPosts.filter(p => !p.media || p.media.length === 0);
+    const savedMediaPosts = savedPosts.filter(p => p.media && p.media.length > 0);
+    const savedContentPosts = savedPosts.filter(p => !p.media || p.media.length === 0);
+
+    const getDisplayPosts = () => {
+        switch (activeTab) {
+            case 'media': return userMediaPosts;
+            case 'content': return userContentPosts;
+            case 'savedMedia': return savedMediaPosts;
+            case 'savedContent': return savedContentPosts;
+            default: return userMediaPosts;
+        }
+    };
+
+    const displayPosts = getDisplayPosts();
+
+    const renderGridItem = (post: CommunityPost) => {
+        const firstMedia = post.media?.[0];
+        const isVideo = firstMedia?.type?.includes('video');
+        const isMulti = post.media && post.media.length > 1;
+
+        return (
+            <TouchableOpacity
+                key={post.id}
+                style={styles.gridItem}
+                onPress={() => navigation.navigate('PostDetail', { initialPost: post, allPosts: displayPosts })}
+            >
+                {isVideo ? (
+                    <View style={styles.premiumVideoCard}>
+                        <Image source={{ uri: firstMedia.mediaUrl }} style={styles.gridImage} />
+                        <View style={styles.videoOverlayGradient}>
+                            <Ionicons name="play" size={24} color={COLORS.white} style={styles.videoPlayIcon} />
+                        </View>
+                        <View style={styles.reelsBadge}>
+                            <Ionicons name="videocam" size={10} color={COLORS.white} />
+                            <Text style={styles.reelsBadgeText}>REEL</Text>
+                        </View>
+                    </View>
+                ) : (
+                    <>
+                        <Image source={{ uri: firstMedia?.mediaUrl }} style={styles.gridImage} />
+                        {isMulti && (
+                            <View style={styles.cardIcon}>
+                                <Ionicons name="copy" size={16} color={COLORS.white} />
+                            </View>
+                        )}
+                    </>
+                )}
+            </TouchableOpacity>
+        );
+    };
 
     return (
         <View style={[styles.container, { backgroundColor: COLORS.primary }]}>
@@ -184,12 +267,20 @@ export default function ProfileScreen({ navigation }: ProfileScreenProps) {
                             <Text style={styles.headerTitle}>Profile</Text>
                             <Text style={styles.headerSubtitle}>Your automotive identity</Text>
                         </View>
-                        <TouchableOpacity
-                            style={styles.settingsBtnSmall}
-                            onPress={() => navigation.navigate('Settings')}
-                        >
-                            <Ionicons name="settings-outline" size={22} color={COLORS.white} />
-                        </TouchableOpacity>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 15 }}>
+                            <TouchableOpacity
+                                style={styles.settingsBtnSmall}
+                                onPress={() => navigation.navigate('EditProfile')}
+                            >
+                                <MaterialIcons name="edit" size={22} color={COLORS.white} />
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                                style={styles.settingsBtnSmall}
+                                onPress={() => navigation.navigate('Settings')}
+                            >
+                                <Ionicons name="settings-outline" size={22} color={COLORS.white} />
+                            </TouchableOpacity>
+                        </View>
                     </View>
                 </LinearGradient>
 
@@ -199,19 +290,25 @@ export default function ProfileScreen({ navigation }: ProfileScreenProps) {
                         style={styles.mainAvatarContainer}
                         onPress={pickImage}
                         activeOpacity={0.8}
+                        disabled={isUploading}
                     >
                         <Image
-                            source={{ uri: avatarImage || userProfile?.profilePicUrl || user?.profilePicUrl || 'https://images.unsplash.com/photo-1599566150163-29194dcaad36?w=200' }}
+                            source={(avatarImage || userProfile?.profilePicUrl || user?.profilePicUrl) ? { uri: avatarImage || userProfile?.profilePicUrl || user?.profilePicUrl } : COLORS.defaultProfileImage}
                             style={styles.mainAvatar}
                         />
+                        {/* Uploading overlay */}
+                        {isUploading && (
+                            <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, borderRadius: 50, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'center', alignItems: 'center' }}>
+                                <ActivityIndicator size="small" color="#fff" />
+                            </View>
+                        )}
                         <View style={styles.cameraIconBadgeProminent}>
                             <Ionicons name="camera" size={14} color={COLORS.white} />
                         </View>
                     </TouchableOpacity>
 
-                    <Text style={styles.nameText}>{userProfile?.name || userProfile?.username || user?.name || user?.username || 'User'}</Text>
                     <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 2 }}>
-                        <Text style={[styles.handleText, { marginBottom: 0 }]}>@{userProfile?.username || user?.username || 'user'}</Text>
+                        <Text style={styles.nameText}>{userProfile?.name || user?.name || userProfile?.username || user?.username || 'User'}</Text>
                         {userProfile?.isPrivate && (
                             <View style={{ flexDirection: 'row', alignItems: 'center', marginLeft: 8, backgroundColor: 'rgba(0,0,0,0.05)', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 8, borderWidth: 1, borderColor: 'rgba(0,0,0,0.1)' }}>
                                 <Ionicons name="lock-closed" size={10} color={COLORS.textLight} />
@@ -219,16 +316,12 @@ export default function ProfileScreen({ navigation }: ProfileScreenProps) {
                             </View>
                         )}
                     </View>
+                    {((userProfile?.name || user?.name) && (userProfile?.username || user?.username) && (userProfile?.name || user?.name) !== (userProfile?.username || user?.username)) && (
+                        <Text style={[styles.handleText, { marginTop: -2 }]}>@{userProfile?.username || user?.username || 'user'}</Text>
+                    )}
                     {userProfile?.email && <Text style={styles.emailText}>{userProfile.email}</Text>}
                     <Text style={styles.bioText}>{userProfile?.bio || 'Automotive Enthusiast | Track Day Junkie'}</Text>
 
-                    {/* Edit Profile Action */}
-                    <TouchableOpacity
-                        style={styles.editProfileBtnNeat}
-                        onPress={() => navigation.navigate('EditProfile')}
-                    >
-                        <Text style={styles.editProfileBtnTextNeat}>Edit Profile</Text>
-                    </TouchableOpacity>
 
                     {/* Stats Section (Elegant Bordered) */}
                     <View style={styles.elegantStatsCardNeat}>
@@ -239,10 +332,7 @@ export default function ProfileScreen({ navigation }: ProfileScreenProps) {
                         <View style={styles.statDividerNeat} />
                         <TouchableOpacity
                             style={styles.statBox}
-                            onPress={() => {
-                                setUsersSheetType('followers');
-                                setUsersSheetVisible(true);
-                            }}
+                            onPress={() => navigation.navigate('Followers', { userId: user?.id || 0, type: 'followers' })}
                         >
                             <Text style={styles.statValueText}>{userProfile?.followersCount || 0}</Text>
                             <Text style={styles.statLabelText}>FOLLOWERS</Text>
@@ -250,10 +340,7 @@ export default function ProfileScreen({ navigation }: ProfileScreenProps) {
                         <View style={styles.statDividerNeat} />
                         <TouchableOpacity
                             style={styles.statBox}
-                            onPress={() => {
-                                setUsersSheetType('following');
-                                setUsersSheetVisible(true);
-                            }}
+                            onPress={() => navigation.navigate('Followers', { userId: user?.id || 0, type: 'following' })}
                         >
                             <Text style={styles.statValueText}>{userProfile?.followingCount || 0}</Text>
                             <Text style={styles.statLabelText}>FOLLOWING</Text>
@@ -306,86 +393,93 @@ export default function ProfileScreen({ navigation }: ProfileScreenProps) {
                     )}
                 </ScrollView>
 
-                {/* Posts Section */}
-                <View style={styles.sectionHeader}>
-                    <Text style={styles.sectionTitle}>{activeTab === 'posts' ? 'Posts' : 'Saved Posts'}</Text>
-                    <View style={styles.postsActions}>
+                {/* Asymmetric Tabs */}
+                <View style={styles.tabsContainer}>
+                    <Text style={styles.tabLabelLeft}>
+                        {activeTab === 'media' && 'Posts'}
+                        {activeTab === 'content' && 'Activity'}
+                        {activeTab === 'savedMedia' && 'Saved Media'}
+                        {activeTab === 'savedContent' && 'Saved Activity'}
+                    </Text>
+
+                    <View style={styles.tabIconsRightGrp}>
                         <TouchableOpacity
-                            style={[styles.postActionBtn, activeTab === 'posts' && { borderColor: COLORS.primary }]}
-                            onPress={() => setActiveTab('posts')}
+                            style={[styles.tabIconBtn, activeTab === 'media' && styles.tabIconBtnActive]}
+                            onPress={() => setActiveTab('media')}
                         >
-                            <Ionicons name="grid" size={20} color={activeTab === 'posts' ? COLORS.primary : COLORS.textLight} />
+                            <Ionicons
+                                name={activeTab === 'media' ? "grid" : "grid-outline"}
+                                size={20}
+                                color={activeTab === 'media' ? COLORS.primary : COLORS.textLight}
+                            />
                         </TouchableOpacity>
+
                         <TouchableOpacity
-                            style={[styles.postActionBtn, activeTab === 'saved' && { borderColor: COLORS.primary }]}
-                            onPress={() => setActiveTab('saved')}
+                            style={[styles.tabIconBtn, activeTab === 'content' && styles.tabIconBtnActive]}
+                            onPress={() => setActiveTab('content')}
                         >
-                            <Ionicons name="bookmark-outline" size={20} color={activeTab === 'saved' ? COLORS.primary : COLORS.textLight} />
+                            <Ionicons
+                                name={activeTab === 'content' ? "document-text" : "document-text-outline"}
+                                size={20}
+                                color={activeTab === 'content' ? COLORS.primary : COLORS.textLight}
+                            />
+                        </TouchableOpacity>
+
+                        <TouchableOpacity
+                            style={[styles.tabIconBtn, activeTab === 'savedMedia' && styles.tabIconBtnActive]}
+                            onPress={() => setActiveTab('savedMedia')}
+                        >
+                            <Ionicons
+                                name={activeTab === 'savedMedia' ? "bookmark" : "bookmark-outline"}
+                                size={20}
+                                color={activeTab === 'savedMedia' ? COLORS.primary : COLORS.textLight}
+                            />
+                        </TouchableOpacity>
+
+                        <TouchableOpacity
+                            style={[styles.tabIconBtn, activeTab === 'savedContent' && styles.tabIconBtnActive]}
+                            onPress={() => setActiveTab('savedContent')}
+                        >
+                            <Ionicons
+                                name={activeTab === 'savedContent' ? "bookmarks" : "bookmarks-outline"}
+                                size={20}
+                                color={activeTab === 'savedContent' ? COLORS.primary : COLORS.textLight}
+                            />
                         </TouchableOpacity>
                     </View>
                 </View>
 
-                <View style={styles.postsGrid}>
-                    {displayPosts.length > 0 ? displayPosts.map((post, index) => {
-                        const hasMedia = post.media && post.media.length > 0;
-                        const firstMedia = hasMedia ? post.media[0] : null;
-
-                        return (
-                            <TouchableOpacity
-                                key={post.id}
-                                style={styles.gridItem}
-                                onPress={() => navigation.navigate('PostDetail', {
-                                    initialPost: post,
-                                    allPosts: displayPosts
-                                })}
-                            >
-                                {!hasMedia ? (
-                                    <LinearGradient
-                                        colors={[COLORS.primary, '#8E2DE2']}
-                                        style={styles.premiumTextCard}
-                                        start={{ x: 0, y: 0 }}
-                                        end={{ x: 1, y: 1 }}
-                                    >
-                                        <Ionicons name="chatbox-ellipses" size={24} color="rgba(255,255,255,0.4)" style={styles.cardIcon} />
-                                        <Text style={styles.premiumTextPreview} numberOfLines={4}>
-                                            {post.content}
-                                        </Text>
-                                    </LinearGradient>
-                                ) : firstMedia?.type === 'video' ? (
-                                    <View style={styles.premiumVideoCard}>
-                                        <Image
-                                            source={{ uri: firstMedia.mediaUrl }}
-                                            style={styles.gridImage}
-                                            resizeMode="cover"
-                                        />
-                                        <LinearGradient
-                                            colors={['transparent', 'rgba(0,0,0,0.6)']}
-                                            style={styles.videoOverlayGradient}
-                                        >
-                                            <View style={styles.reelsBadge}>
-                                                <Ionicons name="play" size={12} color={COLORS.white} />
-                                                <Text style={styles.reelsBadgeText}>REELS</Text>
-                                            </View>
-                                            <Ionicons name="play-circle" size={32} color="rgba(255,255,255,0.8)" style={styles.videoPlayIcon} />
-                                        </LinearGradient>
-                                    </View>
-                                ) : (
-                                    <Image
-                                        source={{ uri: firstMedia?.mediaUrl }}
-                                        style={styles.gridImage}
-                                    />
-                                )}
-                            </TouchableOpacity>
-                        );
-                    }) : (
+                <View style={styles.postsList}>
+                    {displayPosts.length > 0 ? (
+                        (activeTab === 'media' || activeTab === 'savedMedia') ? (
+                            <View style={styles.postsGrid}>
+                                {displayPosts.map(renderGridItem)}
+                            </View>
+                        ) : (
+                            displayPosts.map((post) => (
+                                <CommunityPostCard
+                                    key={post.id}
+                                    post={post}
+                                    onLike={() => { }}
+                                    onComment={() => navigation.navigate('PostDetail', { initialPost: post, allPosts: displayPosts })}
+                                    onShare={() => { }}
+                                    onImagePress={() => navigation.navigate('PostDetail', { initialPost: post, allPosts: displayPosts })}
+                                    isSaved={post.isSaved}
+                                />
+                            ))
+                        )
+                    ) : (
                         <View style={styles.emptyPosts}>
                             <Ionicons
-                                name={activeTab === 'posts' ? "images-outline" : "bookmark-outline"}
+                                name={activeTab.includes('media') ? "images-outline" : "document-text-outline"}
                                 size={40}
                                 color={COLORS.border}
                             />
                             <Text style={styles.emptyPostsText}>
-                                {activeTab === 'posts' ? 'No posts yet' : 'No saved posts'}
+                                {activeTab === 'media' && 'No photos or videos yet'}
+                                {activeTab === 'content' && 'No text posts yet'}
+                                {activeTab === 'savedMedia' && 'No saved photos or videos'}
+                                {activeTab === 'savedContent' && 'No saved content'}
                             </Text>
                         </View>
                     )}
@@ -394,12 +488,6 @@ export default function ProfileScreen({ navigation }: ProfileScreenProps) {
                 <View style={{ height: 60 }} />
             </ScrollView>
 
-            <UsersBottomSheet
-                visible={usersSheetVisible}
-                onClose={() => setUsersSheetVisible(false)}
-                userId={user?.id || null}
-                type={usersSheetType}
-            />
         </View>
     );
 }
@@ -657,34 +745,52 @@ const styles = StyleSheet.create({
         fontWeight: '700',
         marginTop: 6,
     },
-    postsActions: {
+    postsList: {
+        width: '100%',
+        backgroundColor: COLORS.background,
+    },
+    tabsContainer: {
         flexDirection: 'row',
+        width: '100%',
+        backgroundColor: COLORS.background,
+        paddingHorizontal: 20,
+        paddingVertical: 18,
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        borderBottomWidth: 1,
+        borderBottomColor: 'rgba(0,0,0,0.03)',
+        marginTop: 5,
+    },
+    tabLabelLeft: {
+        fontSize: 18,
+        fontWeight: '800',
+        color: '#000',
+    },
+    tabIconsRightGrp: {
+        flexDirection: 'row',
+        alignItems: 'center',
         gap: 12,
     },
-    postActionBtn: {
-        width: 40,
-        height: 40,
-        borderRadius: 20,
-        backgroundColor: COLORS.cardBackground,
+    tabIconBtn: {
+        padding: 4,
         justifyContent: 'center',
         alignItems: 'center',
-        borderWidth: 1.5,
-        borderColor: '#EEF2F7',
-        ...SHADOWS.light,
+    },
+    tabIconBtnActive: {
+        // Keeps it simple, only icon color change
     },
     postsGrid: {
         flexDirection: 'row',
         flexWrap: 'wrap',
-        paddingHorizontal: 18,
-        gap: 6,
+        paddingHorizontal: 15,
+        gap: 2,
     },
     gridItem: {
-        width: (width - 40) / 3 - 4,
-        height: (width - 40) / 3 - 4,
-        margin: 0,
-        borderRadius: 12,
+        width: (width - 30 - 4) / 3, // 30 is horizontal padding, 4 is gap total
+        height: (width - 30 - 4) / 3,
+        marginBottom: 2,
         overflow: 'hidden',
-        ...SHADOWS.light,
+        backgroundColor: COLORS.border,
     },
     gridImage: {
         width: '100%',
@@ -772,5 +878,37 @@ const styles = StyleSheet.create({
         borderRadius: 30,
         justifyContent: 'center',
         alignItems: 'center',
+    },
+    tabContainerNeat: {
+        flexDirection: 'row',
+        paddingHorizontal: 20,
+        marginTop: 15,
+        marginBottom: 10,
+        gap: 12,
+    },
+    tabButtonNeat: {
+        flex: 1,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: COLORS.white,
+        paddingVertical: 12,
+        borderRadius: 16,
+        borderWidth: 1.5,
+        borderColor: '#EEF2F7',
+        ...SHADOWS.light,
+    },
+    activeTabButtonNeat: {
+        backgroundColor: COLORS.primary,
+        borderColor: COLORS.primary,
+        ...SHADOWS.medium,
+    },
+    tabButtonTextNeat: {
+        fontSize: 14,
+        fontWeight: '700',
+        color: COLORS.textLight,
+    },
+    activeTabButtonTextNeat: {
+        color: COLORS.white,
     },
 });

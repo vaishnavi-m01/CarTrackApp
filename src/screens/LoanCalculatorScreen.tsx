@@ -14,6 +14,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { COLORS, SIZES, SHADOWS } from '../constants/theme';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Animated } from 'react-native';
 
 const { width } = Dimensions.get('window');
 
@@ -23,6 +24,12 @@ export default function LoanCalculatorScreen({ navigation, route }: { navigation
     const [loanAmount, setLoanAmount] = useState(passedAmount || '1000000');
     const [interestRate, setInterestRate] = useState('8.5');
     const [tenure, setTenure] = useState('5'); // in years
+
+    const scrollY = React.useRef(new Animated.Value(0)).current;
+
+    React.useEffect(() => {
+        navigation.setParams({ scrollY } as any);
+    }, []);
 
     // Robust Calculation Logic
     const calculation = useMemo(() => {
@@ -82,9 +89,14 @@ export default function LoanCalculatorScreen({ navigation, route }: { navigation
             behavior={Platform.OS === 'ios' ? 'padding' : undefined}
             style={styles.container}
         >
-            <ScrollView
+            <Animated.ScrollView
                 contentContainerStyle={styles.content}
                 showsVerticalScrollIndicator={false}
+                onScroll={Animated.event(
+                    [{ nativeEvent: { contentOffset: { y: scrollY } } }],
+                    { useNativeDriver: false }
+                )}
+                scrollEventThrottle={16}
             >
                 {/* Modern Result Card */}
                 <View style={styles.resultContainer}>
@@ -232,7 +244,7 @@ export default function LoanCalculatorScreen({ navigation, route }: { navigation
                         ))}
                     </View>
                 </View>
-            </ScrollView>
+            </Animated.ScrollView>
         </KeyboardAvoidingView>
     );
 }

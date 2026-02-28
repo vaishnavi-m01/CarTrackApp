@@ -131,6 +131,11 @@ interface AppContextType {
     addToHistory: (id: string) => void;
     toggleSavedNews: (id: number) => void;
     AndroidToast: (message: string, type?: 'success' | 'error') => void;
+    systemUnreadCount: number;
+    communityUnreadCount: number;
+    setSystemUnreadCount: React.Dispatch<React.SetStateAction<number>>;
+    setCommunityUnreadCount: React.Dispatch<React.SetStateAction<number>>;
+    fetchUnreadCount: () => Promise<void>;
     fetchVehicles: () => Promise<void>;
     fetchExpenses: (params?: { vehicleId?: string; categoryId?: string; startDate?: string; endDate?: string }) => Promise<void>;
     fetchWishlist: () => Promise<void>;
@@ -153,6 +158,8 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     const [wishlist, setWishlist] = useState<string[]>([]);
     const [recentlyViewed, setRecentlyViewed] = useState<string[]>([]);
     const [savedNewsIds, setSavedNewsIds] = useState<number[]>([]);
+    const [systemUnreadCount, setSystemUnreadCount] = useState(0);
+    const [communityUnreadCount, setCommunityUnreadCount] = useState(0);
 
     const AndroidToast = (message: string, type: 'success' | 'error' = 'success') => {
         if (Platform.OS === 'android') {
@@ -356,6 +363,21 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
         }
     };
 
+    // Fetch unread notification counts
+    const fetchUnreadCount = async () => {
+        if (!user?.id) return;
+        try {
+            const [systemRes, communityRes] = await Promise.all([
+                apiClient.get(`/notifications/unread-count?userId=${user.id}&types=NEWS_ALERT,INSURANCE_ALERT,SERVICE_ALERT,CAR_LAUNCH,SYSTEM_ALERT`),
+                apiClient.get(`/notifications/unread-count?userId=${user.id}&types=POST_LIKE,POST_COMMENT,STORY_LIKE,STORY_COMMENT,NEW_FOLLOWER,FOLLOW_REQUEST,FOLLOW_ACCEPTED`)
+            ]);
+            setSystemUnreadCount(systemRes.data || 0);
+            setCommunityUnreadCount(communityRes.data || 0);
+        } catch (error) {
+            console.error('Error fetching unread counts:', error);
+        }
+    };
+
     // Load data on user change
     useEffect(() => {
         if (user?.id) {
@@ -366,6 +388,12 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
             fetchTrips();
             fetchFuelLogs();
             fetchDocuments();
+            fetchUnreadCount();
+
+            // Background polling for unread count (Every 30 seconds)
+            // This is a workaround for Expo Go SDK 53 not supporting push notifications
+            const interval = setInterval(fetchUnreadCount, 30000);
+            return () => clearInterval(interval);
         }
     }, [user?.id]);
 
@@ -564,6 +592,11 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
                 savedNewsIds,
                 toggleSavedNews,
                 AndroidToast,
+                systemUnreadCount,
+                communityUnreadCount,
+                setSystemUnreadCount,
+                setCommunityUnreadCount,
+                fetchUnreadCount,
                 fetchVehicles,
                 fetchExpenses,
                 fetchWishlist,

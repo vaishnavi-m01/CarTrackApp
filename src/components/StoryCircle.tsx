@@ -27,24 +27,16 @@ export default function StoryCircle({
         <TouchableOpacity style={styles.container} onPress={onPress} activeOpacity={0.7}>
             {/* Gradient Border */}
             <LinearGradient
-                colors={hasUnviewed ? [COLORS.primary, COLORS.primaryDark, '#FF6B9D'] : ['#E5E7EB', '#E5E7EB']}
+                colors={hasUnviewed ? [COLORS.primary, COLORS.primaryDark, '#FF6B9D'] : ['#E2E8F0', '#E2E8F0']}
                 style={styles.gradientBorder}
                 start={{ x: 0, y: 0 }}
                 end={{ x: 1, y: 1 }}
             >
-                <View style={styles.innerCircle}>
-                    {userAvatar ? (
-                        <Image source={{ uri: userAvatar }} style={styles.avatar} />
-                    ) : (
-                        <LinearGradient
-                            colors={[COLORS.primary, COLORS.secondary]}
-                            style={styles.avatarPlaceholder}
-                        >
-                            <Text style={styles.avatarText}>
-                                {userInitial || (userName ? userName.charAt(0).toUpperCase() : '?')}
-                            </Text>
-                        </LinearGradient>
-                    )}
+                <View style={[styles.innerCircle, !hasUnviewed && { backgroundColor: COLORS.white }]}>
+                    <Image
+                        source={userAvatar ? { uri: userAvatar } : COLORS.defaultProfileImage}
+                        style={styles.avatar}
+                    />
 
                     {/* Render Plus Icon if isAddStory OR if onAddPress is provided */}
                     {(isAddStory || onAddPress) && (

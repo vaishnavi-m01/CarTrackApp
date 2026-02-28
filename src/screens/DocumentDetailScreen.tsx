@@ -12,7 +12,8 @@ import {
     Platform,
     Linking,
     Dimensions,
-    FlatList
+    FlatList,
+    Animated,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as Sharing from 'expo-sharing';
@@ -30,6 +31,12 @@ export default function DocumentDetailScreen({ route, navigation }: { route: any
     const [initialImageIndex, setInitialImageIndex] = useState(0);
     const [galleryImages, setGalleryImages] = useState<DocumentFile[]>([]);
     const [currentGalleryIndex, setCurrentGalleryIndex] = useState(0);
+
+    const scrollY = React.useRef(new Animated.Value(0)).current;
+
+    React.useEffect(() => {
+        navigation.setParams({ scrollY } as any);
+    }, []);
 
     const handleViewFile = async (file: DocumentFile) => {
         try {
@@ -119,7 +126,15 @@ export default function DocumentDetailScreen({ route, navigation }: { route: any
 
     return (
         <SafeAreaView style={styles.container}>
-            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
+            <Animated.ScrollView
+                showsVerticalScrollIndicator={false}
+                contentContainerStyle={styles.scrollContent}
+                onScroll={Animated.event(
+                    [{ nativeEvent: { contentOffset: { y: scrollY } } }],
+                    { useNativeDriver: false }
+                )}
+                scrollEventThrottle={16}
+            >
                 <View style={styles.detailsBox}>
                     <View style={styles.detailItem}>
                         <Text style={styles.detailLabel}>Type</Text>
@@ -166,7 +181,7 @@ export default function DocumentDetailScreen({ route, navigation }: { route: any
                 })}
 
                 <View style={{ height: 40 }} />
-            </ScrollView>
+            </Animated.ScrollView>
 
             <Modal
                 visible={imageViewerVisible}

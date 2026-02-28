@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
     View,
     Text,
@@ -11,54 +11,101 @@ import {
     Platform,
     KeyboardAvoidingView,
     Alert,
+    Keyboard,
+    Animated,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import * as ImagePicker from 'expo-image-picker';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { COLORS, SHADOWS } from '../constants/theme';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useAuth } from '../context/AuthContext';
+import { StackNavigationProp } from '@react-navigation/stack';
+import { RouteProp } from '@react-navigation/native';
+import { RootStackParamList } from '../navigation/MainNavigator';
+import { useChat } from '../hooks/useChat';
 
-const MOCK_CHAT = [
-    {
-        id: '1',
-        text: 'Yo! Check out the new exhaust I just installed on the Ducati. Sounds insane!',
-        sender: 'other',
-        time: '10:42 AM',
-    },
-    {
-        id: '2',
-        text: "No way! Is it the titanium system you were talking about?",
-        sender: 'me',
-        time: '10:43 AM',
-    },
-    {
-        id: '3',
-        image: 'https://images.unsplash.com/photo-1558981403-c5f91cbba527?auto=format&fit=crop&q=80&w=800',
-        sender: 'other',
-        time: '10:45 AM',
-        caption: "I'm heading here this weekend. You down?",
-    },
-    {
-        id: '4',
-        text: "Yeah, exactly. I'll send a clip later. That road looks prime!",
-        sender: 'me',
-        time: '10:46 AM',
-    },
-];
+type ChatDetailScreenNavigationProp = StackNavigationProp<RootStackParamList, 'ChatDetail'>;
+type ChatDetailScreenRouteProp = RouteProp<RootStackParamList, 'ChatDetail'>;
 
 export default function ChatDetailScreen() {
-    const navigation = useNavigation();
-    const route = useRoute();
-    const { userId, userName, userImage } = route.params as any;
+    const navigation = useNavigation<ChatDetailScreenNavigationProp>();
+    const route = useRoute<ChatDetailScreenRouteProp>();
+    const { userId: otherUserId, userName, userImage, initialMessage } = route.params;
     const insets = useSafeAreaInsets();
+    const { user } = useAuth();
+
+    // Initialize Real Chat Hook
+    const { messages, isConnected, isOtherTyping, isOtherOnline, sendMessage, sendTypingStatus } = useChat(
+        Number(user?.id),
+        Number(otherUserId)
+    );
+
+    const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+    const initialSentRef = useRef(false);
+
+    const [keyboardHeight, setKeyboardHeight] = useState(new Animated.Value(0));
+
+    useEffect(() => {
+        if (Platform.OS === 'android') {
+            const kbShow = Keyboard.addListener('keyboardDidShow', e => {
+                Animated.timing(keyboardHeight, {
+                    toValue: e.endCoordinates.height,
+                    duration: 250,
+                    useNativeDriver: false,
+                }).start();
+                setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 100);
+            });
+            const kbHide = Keyboard.addListener('keyboardDidHide', () => {
+                Animated.timing(keyboardHeight, {
+                    toValue: 0,
+                    duration: 250,
+                    useNativeDriver: false,
+                }).start();
+            });
+            return () => {
+                kbShow.remove();
+                kbHide.remove();
+            };
+        }
+    }, []);
+
+    // Handle initial message from Story Reply
+    useEffect(() => {
+        if (initialMessage && isConnected && !initialSentRef.current) {
+            sendMessage(initialMessage);
+            initialSentRef.current = true;
+            // Clear message from navigation params to prevent re-send on mount
+            navigation.setParams({ initialMessage: undefined } as any);
+        }
+    }, [initialMessage, isConnected, sendMessage, navigation]);
 
     // Add header menu
     React.useLayoutEffect(() => {
         navigation.setOptions({
+            headerTitle: () => (
+                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                    <Image
+                        source={(typeof userImage === 'string' && userImage.trim() !== '') ? { uri: userImage } : (userImage && typeof userImage !== 'string' ? userImage : COLORS.defaultProfileImage)}
+                        style={styles.headerAvatar}
+                    />
+                    <View>
+                        <Text style={styles.headerName}>{userName}</Text>
+                        <Text style={[
+                            styles.headerStatus,
+                            isOtherTyping && { color: '#4CD964', fontWeight: 'bold' },
+                            !isOtherTyping && isOtherOnline && { color: '#4CD964' }
+                        ]}>
+                            {isOtherTyping ? 'Typing...' : (isOtherOnline ? '● Online' : 'Offline')}
+                        </Text>
+                    </View>
+                </View>
+            ),
             headerRight: () => (
                 <TouchableOpacity
                     style={{ marginRight: 15 }}
                     onPress={() => Alert.alert('Options', 'Select an action', [
-                        { text: 'View Profile', onPress: () => navigation.navigate('OtherUserProfile' as any, { userId, userName }) },
+                        { text: 'View Profile', onPress: () => navigation.navigate('OtherUserProfile' as any, { userId: otherUserId, userName }) },
                         { text: 'Mute Notifications', onPress: () => { } },
                         { text: 'Block User', style: 'destructive', onPress: () => { } },
                         { text: 'Cancel', style: 'cancel' }
@@ -68,23 +115,39 @@ export default function ChatDetailScreen() {
                 </TouchableOpacity>
             )
         });
-    }, [navigation, userId, userName]);
+    }, [navigation, otherUserId, userName, isConnected, isOtherTyping, isOtherOnline, userImage]);
 
-    const [message, setMessage] = useState('');
-    const [chatMessages, setChatMessages] = useState(MOCK_CHAT);
+    const [messageText, setMessageText] = useState('');
     const flatListRef = useRef<FlatList>(null);
 
+    const handleTextChange = (text: string) => {
+        setMessageText(text);
+
+        // Send typing status
+        sendTypingStatus(true);
+
+        // Clear existing timeout
+        if (typingTimeoutRef.current) {
+            clearTimeout(typingTimeoutRef.current);
+        }
+
+        // Set timeout to send "stopped typing"
+        typingTimeoutRef.current = setTimeout(() => {
+            sendTypingStatus(false);
+        }, 2000);
+    };
+
     const handleSend = () => {
-        if (message.trim()) {
-            const newMessage = {
-                id: Date.now().toString(),
-                text: message.trim(),
-                sender: 'me',
-                time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-            };
-            setChatMessages([...chatMessages, newMessage]);
-            setMessage('');
-            setTimeout(() => flatListRef.current?.scrollToEnd(), 200);
+        if (messageText.trim()) {
+            const success = sendMessage(messageText.trim());
+            if (success) {
+                setMessageText('');
+                sendTypingStatus(false);
+                if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+                setTimeout(() => flatListRef.current?.scrollToEnd(), 200);
+            } else {
+                Alert.alert("Error", "Not connected to chat server");
+            }
         }
     };
 
@@ -93,46 +156,77 @@ export default function ChatDetailScreen() {
             'Share Content',
             'Select an option to share in chat:',
             [
-                { text: '📷 Camera', onPress: () => sendMockMedia('Photo') },
-                { text: '🖼️ Gallery', onPress: () => sendMockMedia('Gallery') },
-                { text: '📍 Location', onPress: () => sendMockMedia('Location') },
+                { text: '📷 Camera', onPress: handleCameraLaunch },
+                { text: '🖼️ Gallery', onPress: handleImagePicker },
                 { text: 'Cancel', style: 'cancel' }
             ]
         );
     };
 
-    const sendMockMedia = (type: string) => {
-        const newMessage: any = {
-            id: Date.now().toString(),
-            sender: 'me',
-            time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        };
-
-        if (type === 'Location') {
-            newMessage.text = "📍 Shared my location: 12.9716° N, 77.5946° E";
-        } else {
-            newMessage.image = 'https://images.unsplash.com/photo-1503376780353-7e6692767b70?auto=format&fit=crop&q=80&w=800';
-            newMessage.caption = `Sent a ${type.toLowerCase()}!`;
+    const handleCameraLaunch = async () => {
+        const { status } = await ImagePicker.requestCameraPermissionsAsync();
+        if (status !== 'granted') {
+            Alert.alert('Permission denied', 'We need camera permissions to take photos.');
+            return;
         }
 
-        setChatMessages(prev => [...prev, newMessage]);
+        const result = await ImagePicker.launchCameraAsync({
+            mediaTypes: ['images'],
+            allowsEditing: true,
+            aspect: [4, 3],
+            quality: 0.8,
+        });
+
+        if (!result.canceled) {
+            sendMediaMessage(result.assets[0].uri);
+        }
+    };
+
+    const handleImagePicker = async () => {
+        const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (status !== 'granted') {
+            Alert.alert('Permission denied', 'We need gallery permissions to pick photos.');
+            return;
+        }
+
+        const result = await ImagePicker.launchImageLibraryAsync({
+            mediaTypes: ['images'],
+            allowsEditing: true,
+            aspect: [4, 3],
+            quality: 0.8,
+        });
+
+        if (!result.canceled) {
+            sendMediaMessage(result.assets[0].uri);
+        }
+    };
+
+    const sendMediaMessage = (uri: string) => {
+        sendMessage(uri, 'IMAGE');
         setTimeout(() => flatListRef.current?.scrollToEnd(), 200);
     };
 
     const renderMessage = ({ item }: { item: any }) => {
-        const isMe = item.sender === 'me';
+        const isMe = String(item.senderId) === String(user?.id);
+        const timeStr = item.timestamp ? new Date(item.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+
         return (
             <View style={[styles.messageRow, isMe ? styles.myRow : styles.otherRow]}>
-                {!isMe && <Image source={{ uri: userImage }} style={styles.messageAvatar} />}
+                {!isMe && (
+                    <Image
+                        source={(typeof userImage === 'string' && userImage.trim() !== '') ? { uri: userImage } : (userImage && typeof userImage !== 'string' ? userImage : COLORS.defaultProfileImage)}
+                        style={styles.messageAvatar}
+                    />
+                )}
                 <View style={[styles.messageBubble, isMe ? styles.myBubble : styles.otherBubble]}>
-                    {item.image && (
+                    {item.type === 'IMAGE' && (
                         <View style={styles.imageContainer}>
-                            <Image source={{ uri: item.image }} style={styles.bubbleImage} />
-                            {item.caption && <Text style={[styles.imageCaption, isMe ? styles.myText : styles.otherText]}>{item.caption}</Text>}
+                            <Image source={{ uri: 'https://images.unsplash.com/photo-1503376780353-7e6692767b70?auto=format&fit=crop&q=80&w=800' }} style={styles.bubbleImage} />
+                            {item.content && <Text style={[styles.imageCaption, isMe ? styles.myText : styles.otherText]}>{item.content}</Text>}
                         </View>
                     )}
-                    {item.text && <Text style={[styles.messageText, isMe ? styles.myText : styles.otherText]}>{item.text}</Text>}
-                    <Text style={[styles.bubbleTime, isMe ? styles.myTime : styles.otherTime]}>{item.time}</Text>
+                    {item.type !== 'IMAGE' && <Text style={[styles.messageText, isMe ? styles.myText : styles.otherText]}>{item.content}</Text>}
+                    <Text style={[styles.bubbleTime, isMe ? styles.myTime : styles.otherTime]}>{timeStr}</Text>
                 </View>
             </View>
         );
@@ -143,25 +237,41 @@ export default function ChatDetailScreen() {
             <StatusBar barStyle="light-content" />
 
             <KeyboardAvoidingView
-                behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+                behavior={Platform.OS === 'ios' ? 'padding' : undefined}
                 style={{ flex: 1 }}
-                keyboardVerticalOffset={Platform.OS === 'ios' ? 125 : 100}
+                keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
+                enabled={true}
             >
-                <FlatList
-                    ref={flatListRef}
-                    data={chatMessages}
-                    renderItem={renderMessage}
-                    keyExtractor={item => item.id}
-                    contentContainerStyle={styles.chatList}
-                    showsVerticalScrollIndicator={false}
-                    onContentSizeChange={() => flatListRef.current?.scrollToEnd()}
-                    keyboardDismissMode="on-drag"
-                    keyboardShouldPersistTaps="handled"
-                />
+                <View style={{ flex: 1 }}>
+                    <FlatList
+                        ref={flatListRef}
+                        data={messages}
+                        renderItem={renderMessage}
+                        keyExtractor={(item, index) => item.id?.toString() || index.toString()}
+                        contentContainerStyle={[styles.chatList, { paddingBottom: 10 }]}
+                        showsVerticalScrollIndicator={false}
+                        onContentSizeChange={() => flatListRef.current?.scrollToEnd()}
+                        keyboardDismissMode="on-drag"
+                        keyboardShouldPersistTaps="handled"
+                        ListFooterComponent={
+                            isOtherTyping ? (
+                                <View style={styles.typingRow}>
+                                    <Image
+                                        source={(typeof userImage === 'string' && userImage.trim() !== '') ? { uri: userImage } : (userImage && typeof userImage !== 'string' ? userImage : COLORS.defaultProfileImage)}
+                                        style={styles.messageAvatar}
+                                    />
+                                    <View style={styles.typingBubble}>
+                                        <Text style={styles.typingDots}>• • •</Text>
+                                    </View>
+                                </View>
+                            ) : null
+                        }
+                    />
+                </View>
 
                 <View style={[
                     styles.inputContainer,
-                    { paddingBottom: Platform.OS === 'ios' ? Math.max(insets.bottom, 15) : Math.max(insets.bottom, 12) }
+                    { paddingBottom: Platform.OS === 'ios' ? Math.max(insets.bottom, 12) : 12 }
                 ]}>
                     <TouchableOpacity style={styles.attachBtn} onPress={handleAttach}>
                         <Ionicons name="add" size={28} color={COLORS.textLight} />
@@ -171,8 +281,8 @@ export default function ChatDetailScreen() {
                             style={styles.input}
                             placeholder="Type a message..."
                             placeholderTextColor={COLORS.textExtraLight}
-                            value={message}
-                            onChangeText={setMessage}
+                            value={messageText}
+                            onChangeText={handleTextChange}
                             multiline
                         />
                         <TouchableOpacity style={styles.emojiBtn}>
@@ -180,22 +290,43 @@ export default function ChatDetailScreen() {
                         </TouchableOpacity>
                     </View>
                     <TouchableOpacity
-                        style={[styles.sendBtn, !message.trim() && styles.sendBtnDisabled]}
+                        style={[styles.sendBtn, !messageText.trim() && styles.sendBtnDisabled]}
                         onPress={handleSend}
-                        disabled={!message.trim()}
+                        disabled={!messageText.trim()}
                     >
                         <Ionicons name="send" size={20} color="#fff" />
                     </TouchableOpacity>
                 </View>
+                {Platform.OS === 'android' && (
+                    <Animated.View style={{ height: keyboardHeight }} />
+                )}
             </KeyboardAvoidingView>
         </View>
     );
 }
 
+
 const styles = StyleSheet.create({
     container: {
         flex: 1,
         backgroundColor: COLORS.background,
+    },
+    headerAvatar: {
+        width: 36,
+        height: 36,
+        borderRadius: 18,
+        marginRight: 10,
+        borderWidth: 1.5,
+        borderColor: 'rgba(255,255,255,0.3)',
+    },
+    headerName: {
+        color: COLORS.white,
+        fontSize: 16,
+        fontWeight: 'bold',
+    },
+    headerStatus: {
+        color: 'rgba(255,255,255,0.8)',
+        fontSize: 12,
     },
     chatList: {
         paddingHorizontal: 15,
@@ -318,5 +449,26 @@ const styles = StyleSheet.create({
     sendBtnDisabled: {
         backgroundColor: '#CBD5E1',
         opacity: 0.8,
+    },
+    typingRow: {
+        flexDirection: 'row',
+        alignItems: 'flex-end',
+        paddingHorizontal: 15,
+        paddingVertical: 10,
+        marginBottom: 10,
+    },
+    typingBubble: {
+        backgroundColor: COLORS.extraLightGray || '#F1F5F9',
+        paddingHorizontal: 15,
+        paddingVertical: 8,
+        borderRadius: 20,
+        borderBottomLeftRadius: 4,
+        marginLeft: 8,
+    },
+    typingDots: {
+        fontSize: 18,
+        fontWeight: 'bold',
+        color: COLORS.textLight,
+        letterSpacing: 2,
     },
 });
